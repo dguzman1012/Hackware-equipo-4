@@ -1,3 +1,9 @@
+node_modules/
+.pnpm-store/
+dist/
+certs/
+.env
+*.log
 .pio/
 .vscode/
 *.aiff
