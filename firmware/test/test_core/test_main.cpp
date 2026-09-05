@@ -3,10 +3,20 @@
 #include "failsafe.h"
 #include "led_view.h"
 #include "link_core.h"
+#include "say_gate.h"
 #include "wire.h"
 
-static ActuatorSet setOf(Seq seq, Pwm left = 0, Pwm right = 0, Tone tone = Tone::Silent) {
-    return ActuatorSet{seq, left, right, 90, 90, tone};
+static ActuatorSet setOf(Seq seq, Pwm left = 0, Pwm right = 0, Tone tone = Tone::Silent,
+                         Utterance say = SAY_NONE) {
+    return ActuatorSet{seq, left, right, 90, 90, tone, say};
+}
+
+static LinkView viewOf(LinkPhase phase, Utterance say, Seq seq = 1) {
+    return LinkView{phase, setOf(seq, 0, 0, Tone::Silent, say), seq};
+}
+
+static Utterance utter(uint8_t token, ClipId clip) {
+    return Utterance{token, clip};
 }
 
 void test_parse_set_exact_example() {
@@ -143,6 +153,78 @@ void test_format_telemetry_absent_sensors() {
     TEST_ASSERT_EQUAL_STRING("T 1043 -1 -1 55120\n", buf);
 }
 
+void test_parse_legacy_six_fields_is_say_none() {
+    ActuatorSet s{};
+    TEST_ASSERT_TRUE(parseSet("S 1043 180 -180 90 90 0\n", s));
+    TEST_ASSERT_EQUAL_UINT8(SAY_NONE.token, s.say.token);
+    TEST_ASSERT_TRUE(s.say.clip == ClipId::None);
+}
+
+void test_parse_eight_fields_lands() {
+    ActuatorSet s{};
+    TEST_ASSERT_TRUE(parseSet("S 1043 128 128 90 90 2 1 7\n", s));
+    TEST_ASSERT_EQUAL_UINT32(1043, s.seq);
+    TEST_ASSERT_TRUE(s.tone == Tone::Love);
+    TEST_ASSERT_TRUE(s.say.clip == ClipId::FoundHere);
+    TEST_ASSERT_EQUAL_UINT8(7, s.say.token);
+}
+
+void test_parse_rejects_bad_say_tok_and_seven_fields() {
+    ActuatorSet s{};
+    TEST_ASSERT_FALSE(parseSet("S 1 0 0 90 90 0 7 1\n", s));
+    TEST_ASSERT_FALSE(parseSet("S 1 0 0 90 90 0 1 64\n", s));
+    TEST_ASSERT_FALSE(parseSet("S 1 0 0 90 90 0 1\n", s));
+}
+
+void test_say_gate_thirty_identical_start_once() {
+    SayGate g;
+    const Utterance first = utter(0, ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, first), 0) == ClipId::None);
+
+    const Utterance want = utter(7, ClipId::FoundHere);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, want), 100) == ClipId::FoundHere);
+    for (int i = 0; i < 29; ++i) {
+        TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, want), 100 + (i + 1) * 100) == ClipId::None);
+    }
+}
+
+void test_say_gate_boot_first_set_silent() {
+    SayGate g;
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(7, ClipId::FoundHere)), 0) == ClipId::None);
+}
+
+void test_say_gate_dark_600ms_new_token_fires() {
+    SayGate g;
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::FoundHere)), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, utter(1, ClipId::FoundHere)), 300) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(2, ClipId::SeekWhere)), 600) ==
+                     ClipId::SeekWhere);
+}
+
+void test_say_gate_dark_2000ms_new_token_silent() {
+    SayGate g;
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::FoundHere)), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, utter(1, ClipId::FoundHere)), 1000) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(2, ClipId::SeekWhere)), 2000) ==
+                     ClipId::None);
+}
+
+void test_say_gate_not_linked_always_none() {
+    SayGate g;
+    const Utterance want = utter(3, ClipId::FoundSawYou);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Offline, want), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Searching, want), 10) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, want), 20) == ClipId::None);
+}
+
+void test_say_gate_token_63_to_1_is_a_change() {
+    SayGate g;
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(63, ClipId::SeekCantSee)), 0) ==
+                     ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::FoundHere)), 100) ==
+                     ClipId::FoundHere);
+}
+
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_parse_set_exact_example);
@@ -155,5 +237,14 @@ int main() {
     RUN_TEST(test_linked_detect_stays_on);
     RUN_TEST(test_led_rows_stay_c1);
     RUN_TEST(test_format_telemetry_absent_sensors);
+    RUN_TEST(test_parse_legacy_six_fields_is_say_none);
+    RUN_TEST(test_parse_eight_fields_lands);
+    RUN_TEST(test_parse_rejects_bad_say_tok_and_seven_fields);
+    RUN_TEST(test_say_gate_thirty_identical_start_once);
+    RUN_TEST(test_say_gate_boot_first_set_silent);
+    RUN_TEST(test_say_gate_dark_600ms_new_token_fires);
+    RUN_TEST(test_say_gate_dark_2000ms_new_token_silent);
+    RUN_TEST(test_say_gate_not_linked_always_none);
+    RUN_TEST(test_say_gate_token_63_to_1_is_a_change);
     return UNITY_END();
 }

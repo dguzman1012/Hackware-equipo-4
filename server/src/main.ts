@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import qrcode from 'qrcode-terminal';
+import { SHUTTLE_HALF_MS, shuttleDrive, shuttlePhase } from './bench';
 import { Brain } from './brain';
 import { ESP_PORT, EspLink } from './esp';
 import { parseEnv } from './env';
@@ -191,7 +192,7 @@ function printStartup(ips: string[], env: ReturnType<typeof parseEnv>, httpsUp: 
   const http = `http://${ip}:${env.PORT}`;
   const faceUrl = httpsUp ? `https://${ip}:${env.HTTPS_PORT}/#face` : `${http}/#face`;
 
-  console.log(`reader=${env.READER} esp_ip=${env.ESP_IP ?? 'auto'}`);
+  console.log(`reader=${env.READER} esp_ip=${env.ESP_IP ?? 'auto'} bench_drive=${env.BENCH_DRIVE}`);
   for (const addr of ips) console.log(`LAN ${addr}`);
   if (!httpsUp) console.warn('HTTPS no configurado: la cámara del celu necesita https (ver README, mkcert)');
   console.log(`face (camera):  ${faceUrl}`);
@@ -266,9 +267,18 @@ export async function main(): Promise<void> {
   );
   loop.start();
 
+  let lastShuttle: ReturnType<typeof shuttlePhase> | null = null;
   const tick = setInterval(() => {
     const now = Date.now();
-    const cmd = brain.plan(now);
+    let cmd = brain.plan(now);
+    if (env.BENCH_DRIVE === 'shuttle' && brain.snapshot().run === 'running') {
+      const phase = shuttlePhase(now);
+      if (phase !== lastShuttle) {
+        lastShuttle = phase;
+        console.log(`[bench] ${phase} ${SHUTTLE_HALF_MS / 1000}s`);
+      }
+      cmd = { ...cmd, drive: shuttleDrive(now) };
+    }
     esp.send(cmd);
     hub.broadcastState(
       hub.toStateMsg({

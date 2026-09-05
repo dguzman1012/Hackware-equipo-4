@@ -42,7 +42,7 @@ export interface HubStateInputs {
   now: number;
 }
 
-const DEFAULT_DIMS = { width: 480, height: 360 } as const;
+const DEFAULT_DIMS = { width: 320, height: 240 } as const;
 const SLOW_CONSUMER_BYTES = 200_000;
 
 interface ClientMeta {

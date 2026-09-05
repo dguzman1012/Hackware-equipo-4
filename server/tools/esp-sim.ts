@@ -3,6 +3,7 @@
 // del remitente. SIM_PORT, SIM_SERVER_IP (default 127.0.0.1; "broadcast" = 255.255.255.255), SIM_DIST_CM.
 // Uso: pnpm sim:esp32
 import dgram from 'node:dgram';
+import { CLIP_TEXT, SAY_TOKEN_MAX, type ClipId } from '../src/brain';
 import { ESP_PORT } from '../src/esp';
 
 const PORT = Number(process.env.SIM_PORT ?? 4211);
@@ -30,6 +31,9 @@ let right = 0;
 let deg1 = 90;
 let deg2 = 90;
 let tone = 0;
+let say = 0;
+let tok = 0;
+let lastPlayTok: number | null = null;
 
 let distCm = 120;
 let yawDeg = 0;
@@ -49,22 +53,49 @@ function applySeqRule(seq: number): boolean {
   return seq > lastSeq || seq + 1000 < lastSeq;
 }
 
-function parseS(line: string): { seq: number; left: number; right: number; deg1: number; deg2: number; tone: number } | null {
+function isClipId(n: number): n is ClipId {
+  return n === 1 || n === 2 || n === 3 || n === 4 || n === 5 || n === 6;
+}
+
+function parseS(line: string): {
+  seq: number;
+  left: number;
+  right: number;
+  deg1: number;
+  deg2: number;
+  tone: number;
+  say: number;
+  tok: number;
+} | null {
   const trimmed = line.replace(/[\r\n]+$/, '').trim();
   const parts = trimmed.split(/\s+/);
-  if (parts[0] !== 'S' || parts.length < 7) return null;
+  if (parts[0] !== 'S') return null;
+  const fieldCount = parts.length - 1;
+  if (fieldCount < 6 || fieldCount === 7) return null;
 
-  const nums = parts.slice(1, 7).map((p) => Number(p));
+  const take = fieldCount >= 8 ? 8 : 6;
+  const nums = parts.slice(1, 1 + take).map((p) => Number(p));
   if (nums.some((n) => !Number.isFinite(n))) return null;
 
   const [seq, nl, nr, nd1, nd2, nt] = nums as [number, number, number, number, number, number];
+  const nsay = take === 8 ? nums[6]! : 0;
+  const ntok = take === 8 ? nums[7]! : 0;
+  if (nsay < 0 || nsay > 6 || ntok < 0 || ntok > SAY_TOKEN_MAX) return null;
   if (!applySeqRule(seq >>> 0)) return null;
 
-  return { seq: seq >>> 0, left: nl, right: nr, deg1: nd1, deg2: nd2, tone: nt };
+  return { seq: seq >>> 0, left: nl, right: nr, deg1: nd1, deg2: nd2, tone: nt, say: nsay, tok: ntok };
+}
+
+function maybePlay(nextSay: number, nextTok: number): void {
+  if (lastPlayTok === nextTok) return;
+  lastPlayTok = nextTok;
+  if (isClipId(nextSay)) {
+    console.log(`▶ ${nextSay} ${CLIP_TEXT[nextSay]}`);
+  }
 }
 
 function maybePrintS(seq: number): void {
-  const line = `S ${seq} ${left} ${right} ${deg1} ${deg2} ${tone}`;
+  const line = `S ${seq} ${left} ${right} ${deg1} ${deg2} ${tone} ${say} ${tok}`;
   const now = Date.now();
   if (line !== lastPrinted || now - lastPrintAt >= 1000) {
     console.log(line);
@@ -154,7 +185,10 @@ socket.on('message', (buf, rinfo) => {
   deg1 = parsed.deg1;
   deg2 = parsed.deg2;
   tone = parsed.tone;
+  say = parsed.say;
+  tok = parsed.tok;
 
+  maybePlay(parsed.say, parsed.tok);
   maybePrintS(parsed.seq);
 });
 

@@ -11,11 +11,14 @@
 #include "leds.h"
 #include "link.h"
 #include "motors.h"
+#include "say_gate.h"
 #include "sensors.h"
 #include "servos.h"
 #include "tone_out.h"
+#include "voice.h"
 
 static Link g_link;
+static SayGate g_say;
 static LinkPhase g_shown = LinkPhase::Offline;
 
 void setup() {
@@ -25,6 +28,7 @@ void setup() {
     motorsBegin();
     servosBegin();
     toneBegin();
+    voiceBegin();
     ledsBegin();
     sensorsBegin();
     g_link.begin(Secrets{WIFI_SSID, WIFI_PASS, SERVER_IP_OR_NULL});
@@ -39,6 +43,7 @@ void loop() {
     motorsApply(act.left, act.right);
     servosApply(act.deg1, act.deg2);
     toneApply(act.tone);
+    voiceStep(g_say.step(link, now));
     ledsShow(ledFrame(link.phase, act, link.lastSeq), now);
 
     static bool first = true;

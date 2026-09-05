@@ -1,7 +1,7 @@
 // Lado server del contrato firmware/PROTOCOL.md. `encodeCommand`/`parseInbound` son puras y testeadas;
 // `EspLink` es el único dueño del socket UDP.
 import dgram from 'node:dgram';
-import type { ActuatorCommand, Ms } from './brain';
+import { SAY_TOKEN_MAX, type ActuatorCommand, type Ms } from './brain';
 
 export const ESP_PORT = 4210;
 
@@ -19,7 +19,7 @@ function clamp(n: number, lo: number, hi: number): number {
 }
 
 function driveToPwm(v: number): number {
-  return clamp(Math.round(v * 255), -255, 255);
+  return clamp(Math.round(-v * 255), -255, 255);
 }
 
 function servoDeg(deg: number): number {
@@ -40,13 +40,16 @@ function parseIntField(s: string): number | null {
   return n;
 }
 
-/** "S <seq> <left> <right> <deg1> <deg2> <tone>\n"; drive -1..1 → PWM -255..255 redondeado. */
+export const MAX_SET_LINE = 63;
+
 export function encodeCommand(seq: number, cmd: ActuatorCommand): string {
   const left = driveToPwm(cmd.drive.left);
   const right = driveToPwm(cmd.drive.right);
   const deg1 = servoDeg(cmd.servo.deg1);
   const deg2 = servoDeg(cmd.servo.deg2);
-  return `S ${seq >>> 0} ${left} ${right} ${deg1} ${deg2} ${cmd.tone}\n`;
+  const say = cmd.say.clip ?? 0;
+  const tok = clamp(Math.round(cmd.say.token), 0, SAY_TOKEN_MAX);
+  return `S ${seq >>> 0} ${left} ${right} ${deg1} ${deg2} ${cmd.tone} ${say} ${tok}\n`;
 }
 
 /** Acepta "T ..." y "H ...". Devuelve null ante basura (se loguea y se ignora; nunca tira). Ignora campos extra. */

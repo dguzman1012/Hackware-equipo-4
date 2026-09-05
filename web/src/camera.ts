@@ -1,20 +1,52 @@
 // getUserMedia + canvas → JPEG. Requiere secure context (https con CA confiable en iOS).
-// Cámara FRONTAL por default: el celu va montado con la pantalla (cara) mirando hacia adelante, así cámara y cara
-// miran para el mismo lado. ?cam=environment para usar la trasera.
+// Cámara FRONTAL por default. El celu va montado horizontal. ?cam=environment para la trasera.
 
 export interface CameraOptions {
   facing: 'user' | 'environment';
-  width: number; // 480
-  height: number; // 360
-  fps: number; // 5
-  quality: number; // 0.6
+  width: number;
+  height: number;
+  fps: number;
+  quality: number;
 }
 
-export const DEFAULT_CAMERA: CameraOptions = { facing: 'user', width: 480, height: 360, fps: 5, quality: 0.6 };
+export const DEFAULT_CAMERA: CameraOptions = { facing: 'user', width: 320, height: 240, fps: 5, quality: 0.4 };
 
 export function cameraOptionsFromUrl(search: string): CameraOptions {
   const cam = new URLSearchParams(search).get('cam');
   return { ...DEFAULT_CAMERA, facing: cam === 'environment' ? 'environment' : 'user' };
+}
+
+function coverCrop(
+  srcW: number,
+  srcH: number,
+  destW: number,
+  destH: number,
+): { sx: number; sy: number; sw: number; sh: number } {
+  const scale = Math.max(destW / srcW, destH / srcH);
+  const sw = destW / scale;
+  const sh = destH / scale;
+  return { sx: (srcW - sw) / 2, sy: (srcH - sh) / 2, sw, sh };
+}
+
+function drawLandscape(
+  ctx: CanvasRenderingContext2D,
+  video: HTMLVideoElement,
+  vw: number,
+  vh: number,
+  dw: number,
+  dh: number,
+): void {
+  if (vh <= vw) {
+    const c = coverCrop(vw, vh, dw, dh);
+    ctx.drawImage(video, c.sx, c.sy, c.sw, c.sh, 0, 0, dw, dh);
+    return;
+  }
+  ctx.save();
+  ctx.translate(dw, 0);
+  ctx.rotate(Math.PI / 2);
+  const c = coverCrop(vw, vh, dh, dw);
+  ctx.drawImage(video, c.sx, c.sy, c.sw, c.sh, 0, 0, dh, dw);
+  ctx.restore();
 }
 
 export class Camera {
@@ -38,7 +70,8 @@ export class Camera {
           facingMode: opts.facing,
           width: { ideal: opts.width },
           height: { ideal: opts.height },
-          frameRate: { ideal: opts.fps + 5 },
+          aspectRatio: { ideal: opts.width / opts.height },
+          frameRate: { ideal: opts.fps },
         },
         audio: false,
       });
@@ -94,13 +127,7 @@ export class Camera {
       const vh = this.video.videoHeight;
       if (vw === 0 || vh === 0) return;
 
-      const scale = Math.max(opts.width / vw, opts.height / vh);
-      const sw = opts.width / scale;
-      const sh = opts.height / scale;
-      const sx = (vw - sw) / 2;
-      const sy = (vh - sh) / 2;
-
-      ctx.drawImage(this.video, sx, sy, sw, sh, 0, 0, opts.width, opts.height);
+      drawLandscape(ctx, this.video, vw, vh, opts.width, opts.height);
       this.encoding = true;
       canvas.toBlob(
         (b) => {

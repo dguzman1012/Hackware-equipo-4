@@ -14,8 +14,8 @@ Implementable en ~1 hora con `WiFi.h` + `WiFiUDP.h` + `sscanf` + `snprintf`. Sin
 ## `S` — Set (server → ESP32), 10 Hz, estado COMPLETO de actuadores
 
 ```
-S <seq> <left> <right> <deg1> <deg2> <tone>\n
-S 1043 180 -180 90 90 0
+S <seq> <left> <right> <deg1> <deg2> <tone> <say> <tok>\n
+S 1043 180 -180 90 90 2 1 7
 ```
 
 | campo | tipo | rango | significado |
@@ -24,8 +24,14 @@ S 1043 180 -180 90 90 0
 | left, right | int | -255..255 | PWM rueda izquierda/derecha; signo = sentido; 0 = freno. Mapear \|v\| de 1..255 a `MIN_PWM..255` (los motores no arrancan con PWM bajo; medir `MIN_PWM`, típico 90–140) |
 | deg1, deg2 | int | 0..180 | ángulo absoluto servo 1 y servo 2 |
 | tone | int | 0..4 | 0 silencio; 1 beep corto en loop; 2 "amor" (arpegio subiendo); 3 "triste" (dos notas bajando); 4 "fiesta" (rápido). Suena en loop **mientras** el campo sea ≠ 0 |
+| say | int | 0..6 | frase guardada. 0 = nada. 1–3 "lo veo", 4–6 "no lo veo". Es un **nivel**: el server repite el mismo par `say`/`tok` a 10 Hz |
+| tok | int | 0..63 | identidad de la frase vigente. Comparar con `!=` solamente. La frase **arranca cuando cambia `tok`**, no cuando llega el paquete |
 
-Aplicar el paquete entero de una vez. Recibir el mismo `S` dos veces no cambia nada. Si el server quiere que suene 2 s, manda `tone≠0` durante 2 s. Las canciones largas salen del **celular**; el ESP32 solo hace tonos por I2S (si el I2S no está listo, ignorar `tone` es válido).
+Firmware nuevo acepta 6 u 8 campos. Seis campos → `say=0 tok=0`. Siete campos se rechazan. Firmware viejo parsea las 6 conversiones y **ignora la cola**.
+
+Peor caso `S 4294967295 -255 -255 180 180 4 6 63\n` = 38 bytes. `WIRE_MAX` es 64. `drainInbox` tira un datagrama de 64 bytes y acepta 63.
+
+Aplicar el paquete entero de una vez. Recibir el mismo `S` dos veces no cambia nada. Si el server quiere que suene 2 s, manda `tone≠0` durante 2 s. Las canciones largas salen del **celular**; el ESP32 solo hace tonos por I2S (si el I2S no está listo, ignorar `tone` es válido). `say`/`tok` no pisan `tone`.
 
 ## `T` — Telemetría (ESP32 → server), 10 Hz, a la IP del último `S`
 
@@ -57,17 +63,18 @@ H 1
 2. **Ultrasonido: si `dist_cm` válido y < 15 cm, y `left > 0 && right > 0` (avanzando) → forzar `left = right = 0`.** Girar (signos distintos) y retroceder siguen permitidos. Se aplica aunque el server pida avanzar: la latencia de red no puede chocar al robot.
 3. Una línea que no parsea → descartar sin resetear nada.
 4. Al arrancar y al perder WiFi: motores 0, servos 90/90, tone 0.
+5. **Dead-man no corta una frase en vuelo.** Fuera de Linked no se **arranca** una frase nueva. Una frase que ya suena termina.
 
 ## Ejemplo de sesión
 
 ```
 ESP32 → *:4210        H 1
 ESP32 → *:4210        H 1
-server → esp:4210     S 1 0 0 90 90 0          (server ya sabe la IP del ESP32; el ESP32 aprende la del server)
+server → esp:4210     S 1 0 0 90 90 0 0 0      (server ya sabe la IP del ESP32; el ESP32 aprende la del server)
 ESP32 → server:4210   T 1 120 0 3020
-server → esp:4210     S 2 150 150 90 90 1      (avanza, beep)
+server → esp:4210     S 2 150 150 90 90 1 0 0  (avanza, beep)
 ESP32 → server:4210   T 2 118 0 3120
-server → esp:4210     S 3 200 -200 180 0 2     (gira a la derecha, servos "corazón", tono amor)
+server → esp:4210     S 3 200 -200 180 0 2 1 7 (gira, tono amor, frase 1, tok 7)
 ...                                            (se corta WiFi 500 ms → motores 0 solos)
 ```
 
@@ -104,7 +111,7 @@ void loop() {
 
 ## Probarlo sin el server / sin el ESP32
 
-- **Sin server**, desde la Mac: `echo "S 1 100 100 90 90 1" | nc -u <ip-esp32> 4210` → avanza y beepea; a los 500 ms frena solo. Telemetría: `nc -ul 4210`.
+- **Sin server**, desde la Mac: `echo "S 1 100 100 90 90 1 4 9" | nc -u <ip-esp32> 4210` → avanza, beepea, y dice la frase 4 una vez. A los 500 ms frena solo. Telemetría: `nc -ul 4210`.
 - **Sin ESP32**: `pnpm sim:esp32` levanta un ESP32 falso en Node que manda `H`, imprime cada `S` y responde `T` a 10 Hz.
 
 ## Fuera de v1 (a propósito)

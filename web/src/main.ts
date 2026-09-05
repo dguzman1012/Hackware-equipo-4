@@ -7,8 +7,14 @@ import { mountViewer } from './viewer';
 const app = document.getElementById('app');
 if (!app) throw new Error('#app missing');
 
-const parsed = Role.safeParse(location.hash.slice(1));
-const role: Role = parsed.success ? parsed.data : 'viewer';
+function roleFromUrl(): Role {
+  const hash = location.hash.replace(/^#/, '').split(/[/?]/)[0] ?? '';
+  const path = location.pathname.replace(/^\/+|\/+$/g, '').split('/')[0] ?? '';
+  const parsed = Role.safeParse(hash || path);
+  return parsed.success ? parsed.data : 'viewer';
+}
+
+const role = roleFromUrl();
 
 switch (role) {
   case 'face':

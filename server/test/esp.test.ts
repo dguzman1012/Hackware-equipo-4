@@ -1,13 +1,33 @@
-// Ejemplos exactos de firmware/PROTOCOL.md. Rojos hasta implementar esp.ts (paso 1 del plan).
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { encodeCommand, parseInbound } from '../src/esp';
+import { initialState, plan } from '../src/brain';
+import { encodeCommand, MAX_SET_LINE, parseInbound } from '../src/esp';
 
 test('encodeCommand produce la línea S del contrato', () => {
   assert.equal(
-    encodeCommand(1043, { drive: { left: 0.7059, right: -0.7059 }, servo: { deg1: 90, deg2: 90 }, tone: 0 }),
-    'S 1043 180 -180 90 90 0\n',
+    encodeCommand(1043, {
+      drive: { left: 0.7059, right: -0.7059 },
+      servo: { deg1: 90, deg2: 90 },
+      tone: 0,
+      say: { token: 0, clip: null },
+    }),
+    'S 1043 -180 180 90 90 0 0 0\n',
   );
+});
+
+test('encodeCommand silent initial state is eight fields', () => {
+  assert.equal(encodeCommand(1, plan(initialState(0), 0)), 'S 1 0 0 90 90 0 0 0\n');
+});
+
+test('encodeCommand length at extremes stays under MAX_SET_LINE', () => {
+  const line = encodeCommand(0xffff_ffff, {
+    drive: { left: -1, right: -1 },
+    servo: { deg1: 180, deg2: 180 },
+    tone: 4,
+    say: { token: 63, clip: 6 },
+  });
+  assert.equal(line, 'S 4294967295 255 255 180 180 4 6 63\n');
+  assert.ok(line.length <= MAX_SET_LINE);
 });
 
 test('parseInbound: T con -1 → null en dominio', () => {

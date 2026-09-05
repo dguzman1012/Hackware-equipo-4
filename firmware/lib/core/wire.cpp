@@ -21,10 +21,19 @@ bool parseSet(const char* line, ActuatorSet& out) {
     int d1 = 0;
     int d2 = 0;
     int t = 0;
-    if (std::sscanf(line, "S %lu %d %d %d %d %d", &seq, &l, &r, &d1, &d2, &t) != 6) {
-        return false;
-    }
+    int say = 0;
+    int tok = 0;
+    const int n = std::sscanf(line, "S %lu %d %d %d %d %d %d %d", &seq, &l, &r, &d1, &d2, &t, &say, &tok);
+    if (n != 6 && n != 8) return false;
     if (t < 0 || t > 4) return false;
+
+    Utterance u = SAY_NONE;
+    if (n == 8) {
+        if (tok < 0 || tok > SAY_TOKEN_MAX) return false;
+        if (!clipFromWire(say, u.clip)) return false;
+        u.token = static_cast<uint8_t>(tok);
+    }
+
     out = ActuatorSet{
         static_cast<Seq>(seq),
         clampPwm(l),
@@ -32,6 +41,7 @@ bool parseSet(const char* line, ActuatorSet& out) {
         clampDeg(d1),
         clampDeg(d2),
         static_cast<Tone>(t),
+        u,
     };
     return true;
 }

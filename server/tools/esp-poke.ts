@@ -5,6 +5,7 @@ const BRAKE: ActuatorCommand = {
   drive: { left: 0, right: 0 },
   servo: { deg1: 90, deg2: 90 },
   tone: 0,
+  say: { token: 0, clip: null },
 };
 
 function parseArgs(argv: string[]) {
@@ -50,6 +51,7 @@ const cmd: ActuatorCommand = {
   drive: { left: args.left / 255, right: args.right / 255 },
   servo: { deg1: 90, deg2: 90 },
   tone: 0,
+  say: { token: 0, clip: null },
 };
 
 const sent = new Set<number>();

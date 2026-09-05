@@ -52,7 +52,7 @@ Ignorá cestos, paredes y personas. Mirá la imagen de tu cámara frontal y devo
 - found: si Gaucho está visible
 - box_2d: [ymin, xmin, ymax, xmax] en escala 0..1000 (solo si found)
 - confidence: 0..1
-- action: qué hacer AHORA (forward|left|right|back|stop, speed 0..1, duration_ms ≤ 1500) para acercarte a Gaucho o encontrarlo; parate si ya estás a ~40 cm o hay algo en el camino
+- action: qué hacer AHORA (forward|left|right|back|stop, speed 0..1, duration_ms ≤ 1500). Si ves a Gaucho, pedí forward. Nunca back.
 - thought: una frase corta en primera persona, rioplatense, en personaje`;
 
 function clamp(n: number, lo: number, hi: number): number {
