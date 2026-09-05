@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { T, initialState, plan, reduce } from '../src/brain';
 import type { RobotState } from '../src/brain';
-import type { LookoutRead, SceneRead } from '../src/perception';
+import type { Frame, LookoutRead, SceneRead } from '../src/perception';
+import { parseLookoutJson } from '../src/readers';
 
 const STOP = { left: 0, right: 0 };
 
@@ -23,6 +24,8 @@ const lookout = (frameId: number, capturedAt: number, turn: LookoutRead['turn'])
   confidence: 0.9,
   latencyMs: 300,
 });
+
+const lookoutFrame: Frame = { frameId: 1, capturedAt: 100, jpeg: new Uint8Array(), width: 1, height: 1 };
 
 /** running, searching, con un frame fresco para que el clamp de cámara no frene. */
 function searchingState(now = 100): RobotState {
@@ -154,6 +157,16 @@ test('chasing ignora un lookout fresco', () => {
   s = reduce(s, { type: 'lookout', read: lookout(10, now, 'left') }, now + 10);
   const d = plan(s, now + 20).drive;
   assert.ok(d.left > d.right, 'P-control hacia cx=0.8; lookout left no manda');
+});
+
+test('parseLookoutJson: unknown y gaucho ausente → null; right con ambos → right', () => {
+  const base = { robot_found: true, gaucho_found: true, confidence: 0.9 };
+  assert.equal(parseLookoutJson(JSON.stringify({ ...base, turn: 'unknown' }), lookoutFrame, 10).turn, null);
+  assert.equal(
+    parseLookoutJson(JSON.stringify({ ...base, gaucho_found: false, turn: 'right' }), lookoutFrame, 10).turn,
+    null,
+  );
+  assert.equal(parseLookoutJson(JSON.stringify({ ...base, turn: 'right' }), lookoutFrame, 10).turn, 'right');
 });
 
 test('lookout: frameId viejo y turn null no pisan el hint', () => {

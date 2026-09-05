@@ -15,6 +15,9 @@ export type RunState = z.infer<typeof RunState>;
 export const ReaderKind = z.enum(['gemini', 'mock', 'manual']);
 export type ReaderKind = z.infer<typeof ReaderKind>;
 
+export const LookoutReaderKind = z.enum(['gemini', 'mock']);
+export type LookoutReaderKind = z.infer<typeof LookoutReaderKind>;
+
 export const ActionKind = z.enum(['forward', 'left', 'right', 'back', 'stop']);
 export type ActionKind = z.infer<typeof ActionKind>;
 

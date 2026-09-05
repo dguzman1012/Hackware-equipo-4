@@ -1,13 +1,13 @@
-// Tres implementaciones de SceneReader, intercambiables por env o en caliente desde #control.
+// SceneReader (gemini/mock/manual) y LookoutReader (gemini/mock), intercambiables por env.
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ActionKind } from '@gaucho/protocol';
 import { GoogleGenAI, ThinkingLevel, Type, type Part } from '@google/genai';
 import { z } from 'zod';
-import type { ReaderKind } from '@gaucho/protocol';
+import type { LookoutReaderKind, ReaderKind } from '@gaucho/protocol';
 import type { Env } from './env';
-import type { Action, Frame, SceneRead, SceneReader } from './perception';
+import type { Action, Frame, LookoutRead, LookoutReader, SceneRead, SceneReader, Turn } from './perception';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 
@@ -270,6 +270,171 @@ export function makeReader(kind: ReaderKind, env: Env): SceneReader {
       return new MockReader(DEMO_SCRIPT);
     case 'manual':
       return new ManualReader();
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
+}
+
+export const ROBOT_DESC =
+  'una caja de plástico beige rectangular con dos ruedas de llanta amarilla atrás y una rueda loca chica adelante; el frente tiene un LED amarillo y la parte de atrás un LED azul';
+
+const LOOKOUT_RESPONSE_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    robot_found: { type: Type.BOOLEAN },
+    gaucho_found: { type: Type.BOOLEAN },
+    turn: { type: Type.STRING, enum: ['left', 'right', 'ahead', 'unknown'] },
+    confidence: { type: Type.NUMBER },
+  },
+  required: ['robot_found', 'gaucho_found', 'turn', 'confidence'],
+} as const;
+
+const LookoutResponseZ = z.object({
+  robot_found: z.boolean(),
+  gaucho_found: z.boolean(),
+  turn: z.enum(['left', 'right', 'ahead', 'unknown']),
+  confidence: z.number(),
+});
+
+const LOOKOUT_PROMPT = `La imagen es una vista desde ARRIBA del cuarto.
+Identificá el robot chico (${ROBOT_DESC}) y a Gaucho (humanoide blanco, cabeza redonda).
+Devolvé JSON:
+- robot_found, gaucho_found
+- turn: hacia dónde tiene que girar el ROBOT, desde su propio frente, para mirar a Gaucho (left|right|ahead|unknown). ahead si Gaucho está a ±30° del frente del robot
+- confidence: 0..1
+Si no ves al robot o a Gaucho, turn=unknown.`;
+
+/** Tira ante JSON inválido o fuera de esquema; ReaderLoop loguea y hace backoff. */
+export function parseLookoutJson(text: string, frame: Frame, latencyMs: number): LookoutRead {
+  const parsed = LookoutResponseZ.parse(JSON.parse(text));
+  const turn: Turn | null =
+    parsed.robot_found && parsed.gaucho_found && parsed.turn !== 'unknown' ? parsed.turn : null;
+  return {
+    frameId: frame.frameId,
+    capturedAt: frame.capturedAt,
+    turn,
+    confidence: clamp(parsed.confidence, 0, 1),
+    latencyMs,
+  };
+}
+
+export class GeminiLookoutReader implements LookoutReader {
+  readonly kind = 'gemini' satisfies ReaderKind;
+  private readonly ai: GoogleGenAI;
+  private readonly model: string;
+  private readonly gauchoImages: Uint8Array[];
+  private readonly robotImages: Uint8Array[];
+
+  constructor(opts: {
+    apiKey: string;
+    model: string;
+    gauchoImages: Uint8Array[];
+    robotImages: Uint8Array[];
+  }) {
+    this.ai = new GoogleGenAI({ apiKey: opts.apiKey });
+    this.model = opts.model;
+    this.gauchoImages = opts.gauchoImages;
+    this.robotImages = opts.robotImages;
+  }
+
+  async read(frame: Frame): Promise<LookoutRead> {
+    const start = Date.now();
+    const parts: Part[] = [];
+    if (this.robotImages.length > 0) {
+      parts.push({ text: 'Estas fotos son del robot chico:' });
+      for (const img of this.robotImages) parts.push(jpegPart(img));
+    }
+    if (this.gauchoImages.length > 0) {
+      parts.push({ text: 'Estas fotos son de Gaucho, el humanoide blanco:' });
+      for (const img of this.gauchoImages) parts.push(jpegPart(img));
+    }
+    parts.push({ text: LOOKOUT_PROMPT }, { text: 'Esta es la imagen actual, vista desde arriba:' }, jpegPart(frame.jpeg));
+
+    const response = await this.ai.models.generateContent({
+      model: this.model,
+      contents: [{ role: 'user', parts }],
+      config: {
+        responseMimeType: 'application/json',
+        responseJsonSchema: LOOKOUT_RESPONSE_SCHEMA,
+        thinkingConfig: thinkingConfigForModel(this.model),
+      },
+    });
+
+    const text = response.text;
+    if (!text) throw new Error('empty Gemini lookout response');
+    return parseLookoutJson(text, frame, Date.now() - start);
+  }
+}
+
+/** Guion lookout: right → ahead → null. Período 9000 ms. */
+export const LOOKOUT_SCRIPT: Array<{ atMs: number; turn: Turn | null }> = [
+  { atMs: 0, turn: 'right' },
+  { atMs: 4000, turn: 'ahead' },
+  { atMs: 7000, turn: null },
+];
+
+export class MockLookoutReader implements LookoutReader {
+  readonly kind = 'mock' satisfies ReaderKind;
+  private readonly script: Array<{ atMs: number; turn: Turn | null }>;
+  private readonly periodMs = 9000;
+  private readonly startedAt: number;
+
+  constructor(script: Array<{ atMs: number; turn: Turn | null }> = LOOKOUT_SCRIPT) {
+    this.script = script;
+    this.startedAt = Date.now();
+  }
+
+  private turnAt(elapsedMs: number): Turn | null {
+    const t = elapsedMs % this.periodMs;
+    let turn: Turn | null = null;
+    for (const entry of this.script) {
+      if (entry.atMs <= t) turn = entry.turn;
+      else break;
+    }
+    return turn;
+  }
+
+  read(frame: Frame): Promise<LookoutRead> {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        const elapsed = Date.now() - this.startedAt;
+        resolve({
+          frameId: frame.frameId,
+          capturedAt: frame.capturedAt,
+          turn: this.turnAt(elapsed),
+          confidence: 0.9,
+          latencyMs: 300,
+        });
+      }, 300);
+    });
+  }
+}
+
+export function makeLookoutReader(kind: LookoutReaderKind, env: Env): LookoutReader {
+  switch (kind) {
+    case 'gemini': {
+      if (!env.GEMINI_API_KEY) {
+        throw new Error('LOOKOUT_READER=gemini requiere GEMINI_API_KEY');
+      }
+      const gauchoImages = loadReferenceImages(path.join(moduleDir, '../assets/gaucho'));
+      const robotImages = loadReferenceImages(path.join(moduleDir, '../assets/robot'));
+      const refKb = Math.round(
+        [...gauchoImages, ...robotImages].reduce((n, img) => n + img.byteLength, 0) / 1024,
+      );
+      console.log(
+        `[lookout/gemini] ${gauchoImages.length} fotos Gaucho + ${robotImages.length} robot (${refKb} KB por lectura)`,
+      );
+      return new GeminiLookoutReader({
+        apiKey: env.GEMINI_API_KEY,
+        model: env.GEMINI_MODEL,
+        gauchoImages,
+        robotImages,
+      });
+    }
+    case 'mock':
+      return new MockLookoutReader();
     default: {
       const _exhaustive: never = kind;
       return _exhaustive;
