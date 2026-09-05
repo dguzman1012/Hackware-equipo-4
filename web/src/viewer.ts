@@ -1,4 +1,4 @@
-// #viewer — jurado. Read-only, N instancias. Canvas con el último JPEG + overlay (bbox si target.ageMs < 1500,
+// #viewer — jurado. Read-only, N instancias. Canvas con el último JPEG + overlay (bbox si el target es fresco,
 // label grande con mood/behavior y caption, acción vigente del LLM). También lo reutiliza #control.
 import type { StateMsg } from '@gaucho/protocol';
 import { RobotSocket } from './ws';
@@ -27,8 +27,10 @@ function confidenceColor(confidence: number): string {
   return '#ef4444';
 }
 
+const TARGET_MAX_AGE_MS = 4000; // = T.lostAfterMs del server; ageMs se mide desde el frame, y Gemini tarda ~2 s
+
 function drawOverlay(ctx: CanvasRenderingContext2D, s: StateMsg, W: number, H: number): void {
-  if (s.target && s.target.ageMs < 1500) {
+  if (s.target && s.target.ageMs < TARGET_MAX_AGE_MS) {
     const t = s.target;
     const side = t.size * Math.max(W, H);
     const x = t.cx * W - side / 2;

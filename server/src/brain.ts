@@ -19,7 +19,12 @@ export interface Target {
   confidence: number; // 0..1
   frameId: number; // monotónico, lo asigna FrameBus
   seenAt: Ms; // capturedAt del frame, no la hora de respuesta del modelo
-  caption: string; // "pensamiento" en personaje que devuelve el reader ('' si no hay)
+}
+
+/** "Pensamiento" en personaje de la última lectura, la haya visto o no. */
+export interface Thought {
+  text: string;
+  at: Ms; // cuándo llegó la lectura
 }
 
 /** Acción propuesta por el LLM, ya con vencimiento absoluto. */
@@ -40,6 +45,7 @@ export interface RobotState {
   run: RunState;
   behavior: Behavior;
   target: Target | null; // última lectura válida
+  thought: Thought | null; // última frase del LLM (captionOf la usa mientras sea fresca)
   action: PlannedAction | null; // última acción del LLM (puede estar vencida: plan() lo chequea)
   hits: number; // lecturas válidas consecutivas (confirmHits filtra falsos positivos)
   lastFoundAt: Ms | null; // para decidir si un found es reencuentro (party)
@@ -62,12 +68,15 @@ export type BrainEvent =
   | { type: 'tick' };
 
 // ---------- Constantes del lazo (lo que se tunea con el chasis real) ----------
+// Gemini tarda 1.8–3 s por frame (medido); ReaderLoop corta a 4 s. Las edades se miden desde capturedAt,
+// así que todo umbral de "frescura" tiene que superar esa latencia o el LLM nunca llega a mandar.
 export const T = {
-  readMaxAgeMs: 1500, // lectura más vieja que esto se descarta
-  actionMaxMs: 1500, // ninguna acción del LLM vive más que esto sin lectura nueva
+  readMaxAgeMs: 4500, // lectura más vieja que esto se descarta (> timeout de ReaderLoop)
+  actionMaxMs: 1500, // ninguna acción del LLM vive más que esto desde que llega
   confirmHits: 2, // lecturas seguidas con target para pasar de searching a chasing
   minConfidence: 0.6,
-  lostAfterMs: 1500, // sin ver target en chasing/found → lost
+  lostAfterMs: 4000, // target visto hace más que esto en chasing/found → lost (≈ 2 s sin nueva lectura)
+  thoughtMaxMs: 6000, // la frase del LLM se muestra hasta esto después de llegar; luego la frase por behavior
   foundSizeMin: 0.35, // target.size ≥ esto (o distCm < foundDistCm) → found
   foundDistCm: 30,
   celebrateMs: 4000,
@@ -90,7 +99,7 @@ function clamp(n: number, lo: number, hi: number): number {
 }
 
 function toTarget(read: SceneRead, t: NonNullable<SceneRead['target']>): Target {
-  return { ...t, frameId: read.frameId, seenAt: read.capturedAt, caption: read.caption };
+  return { ...t, frameId: read.frameId, seenAt: read.capturedAt };
 }
 
 function isTargetFresh(s: RobotState, now: Ms): boolean {
@@ -160,6 +169,7 @@ export function initialState(now: Ms): RobotState {
     run: 'stopped',
     behavior: { kind: 'searching', since: now, spinDir: 1 },
     target: null,
+    thought: null,
     action: null,
     hits: 0,
     lastFoundAt: null,
@@ -176,11 +186,12 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
       if (read.frameId <= (s.target?.frameId ?? -1)) return s;
       if (now - read.capturedAt > T.readMaxAgeMs) return s;
 
+      // La acción corre desde que llega, no desde el frame: con 2 s de latencia, medida desde capturedAt ya vendría vencida.
       const action = read.action
         ? {
             kind: read.action.kind,
             speed: read.action.speed,
-            until: read.capturedAt + Math.min(read.action.durationMs, T.actionMaxMs),
+            until: now + Math.min(read.action.durationMs, T.actionMaxMs),
             frameId: read.frameId,
           }
         : s.action;
@@ -194,8 +205,9 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
         hits += 1;
       }
 
+      const thought = read.caption ? { text: read.caption, at: now } : s.thought;
       const stepped = stepBehavior({ ...s, target, hits, action }, now);
-      return { ...s, target, hits, action, behavior: stepped.behavior, lastFoundAt: stepped.lastFoundAt };
+      return { ...s, target, thought, hits, action, behavior: stepped.behavior, lastFoundAt: stepped.lastFoundAt };
     }
     case 'frame':
       return { ...s, lastFrameAt: e.capturedAt };
@@ -246,14 +258,11 @@ function fromAction(a: PlannedAction): { left: number; right: number } {
   }
 }
 
-function chase(target: Target, now: Ms): { left: number; right: number } {
+function chase(target: Target): { left: number; right: number } {
   const err = target.cx - 0.5;
   const turn = T.chase.kTurn * err;
   const forward = Math.abs(err) < T.chase.centerTol ? T.chase.forward : 0;
-  const decay = Math.max(0, 1 - (now - target.seenAt) / T.lostAfterMs);
-  const left = clamp((forward + turn) * decay, -1, 1);
-  const right = clamp((forward - turn) * decay, -1, 1);
-  return { left, right };
+  return { left: clamp(forward + turn, -1, 1), right: clamp(forward - turn, -1, 1) };
 }
 
 function spin(dir: 1 | -1): { left: number; right: number } {
@@ -338,7 +347,7 @@ function driveFor(s: RobotState, now: Ms): { left: number; right: number } {
       return STOP_DRIVE;
     case 'chasing':
       if (actionFresh(s.action, now)) return fromAction(s.action);
-      return s.target ? chase(s.target, now) : STOP_DRIVE;
+      return s.target ? chase(s.target) : STOP_DRIVE;
     case 'searching':
       if (actionFresh(s.action, now)) return fromAction(s.action);
       return spin(b.spinDir);
@@ -361,7 +370,7 @@ export function moodOf(s: RobotState, now: Ms): Mood {
 }
 
 export function captionOf(s: RobotState, now: Ms): string {
-  if (s.target?.caption && isTargetFresh(s, now)) return s.target.caption;
+  if (s.thought && now - s.thought.at < T.thoughtMaxMs) return s.thought.text;
   switch (s.behavior.kind) {
     case 'searching':
       return '¿Gaucho? ¿Dónde estás?';
