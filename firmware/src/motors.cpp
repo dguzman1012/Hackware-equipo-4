@@ -7,40 +7,15 @@ void motorsBegin() {
     pinMode(LEFT_IN2, OUTPUT);
     pinMode(RIGHT_IN1, OUTPUT);
     pinMode(RIGHT_IN2, OUTPUT);
-    motorsStop();
+    motorsApply(0, 0);
 }
 
-void motorsStop() {
-    digitalWrite(LEFT_IN1, LOW);
-    digitalWrite(LEFT_IN2, LOW);
-    digitalWrite(RIGHT_IN1, LOW);
-    digitalWrite(RIGHT_IN2, LOW);
+static void wheel(int in1, int in2, Pwm v) {
+    digitalWrite(in1, v > 0 ? HIGH : LOW);
+    digitalWrite(in2, v < 0 ? HIGH : LOW);
 }
 
-void motorsForward() {
-    digitalWrite(LEFT_IN1, HIGH);
-    digitalWrite(LEFT_IN2, LOW);
-    digitalWrite(RIGHT_IN1, HIGH);
-    digitalWrite(RIGHT_IN2, LOW);
-}
-
-void motorsBackward() {
-    digitalWrite(LEFT_IN1, LOW);
-    digitalWrite(LEFT_IN2, HIGH);
-    digitalWrite(RIGHT_IN1, LOW);
-    digitalWrite(RIGHT_IN2, HIGH);
-}
-
-void motorsRotateLeft() {
-    digitalWrite(LEFT_IN1, LOW);
-    digitalWrite(LEFT_IN2, HIGH);
-    digitalWrite(RIGHT_IN1, HIGH);
-    digitalWrite(RIGHT_IN2, LOW);
-}
-
-void motorsRotateRight() {
-    digitalWrite(LEFT_IN1, HIGH);
-    digitalWrite(LEFT_IN2, LOW);
-    digitalWrite(RIGHT_IN1, LOW);
-    digitalWrite(RIGHT_IN2, HIGH);
+void motorsApply(Pwm left, Pwm right) {
+    wheel(LEFT_IN1, LEFT_IN2, left);
+    wheel(RIGHT_IN1, RIGHT_IN2, right);
 }

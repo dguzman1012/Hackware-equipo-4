@@ -7,6 +7,7 @@
     "dev": "tsx watch src/main.ts",
     "start": "tsx src/main.ts",
     "sim:esp32": "tsx tools/esp-sim.ts",
+    "poke": "tsx tools/esp-poke.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --import tsx --test test/*.test.ts"
   },

@@ -10,3 +10,4 @@ certs/
 *.wav
 tmp_audio/
 .DS_Store
+firmware/src/secrets.h

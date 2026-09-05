@@ -5,25 +5,11 @@
 void ledsBegin() {
     pinMode(LED_LEFT, OUTPUT);
     pinMode(LED_RIGHT, OUTPUT);
-    ledsOff();
-}
-
-void ledsOff() {
     digitalWrite(LED_LEFT, LOW);
     digitalWrite(LED_RIGHT, LOW);
 }
 
-void ledsBoth() {
-    digitalWrite(LED_LEFT, HIGH);
-    digitalWrite(LED_RIGHT, HIGH);
-}
-
-void ledsLeft() {
-    digitalWrite(LED_LEFT, HIGH);
-    digitalWrite(LED_RIGHT, LOW);
-}
-
-void ledsRight() {
-    digitalWrite(LED_LEFT, LOW);
-    digitalWrite(LED_RIGHT, HIGH);
+void ledsShow(const LedFrame& f, uint32_t now) {
+    digitalWrite(LED_LEFT, lit(f.left, now) ? HIGH : LOW);
+    digitalWrite(LED_RIGHT, lit(f.right, now) ? HIGH : LOW);
 }
