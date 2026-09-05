@@ -12,7 +12,7 @@ Diseño completo y por qué: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ```bash
 pnpm install
-cp .env.example .env            # READER=gemini + GEMINI_API_KEY por default; READER=mock para demo sin cámara ni key
+cp .env.example .env            # READER=gemini + GEMINI_API_KEY; LOOKOUT_READER opcional (sigue a READER si se omite)
 pnpm dev                        # server :8080 (+ :8443 si hay certs/) y vite build --watch
 pnpm sim:esp32                  # en otra terminal: ESP32 falso hasta que exista el firmware
 ```
@@ -22,8 +22,11 @@ URLs (el server las imprime con QR al arrancar; `<ip>` es la IP LAN de la laptop
 | Quién | URL | Notas |
 |---|---|---|
 | Celu robot (cara + cámara) | `https://<ip>:8443/#face` | Necesita HTTPS confiable (ver abajo). `?cam=environment` para cámara trasera |
+| Lookout (cámara de techo) | `https://<ip>:8443/#lookout` | Necesita HTTPS. Cámara trasera por default; `?cam=user` para frontal. MJPEG: `/lookout.mjpg` |
 | Control (laptop o celu del equipo) | `http://<ip>:8080/#control` | **Arrancar / Parar**, elegir reader, ver estado y el "pensamiento" del LLM. No maneja el robot |
 | Jurado (N pantallas) | `http://<ip>:8080/#viewer` | Video + bbox + estado. Sin JS: `http://<ip>:8080/video.mjpg` |
+
+El lookout es un segundo celu, fijo alto (estante o trípode, ~2 m) mirando al piso donde corre la demo, cámara trasera. Pegá en la tapa del robot un marcador grande y asimétrico (flecha o disco bicolor, ≥10 cm) que apunte al frente, y actualizá `ROBOT_DESC` en `server/src/readers.ts` para que coincida. El lookout solo manda mientras el robot está en `searching`.
 
 ### HTTPS para la cámara del celu
 
@@ -61,13 +64,13 @@ packages/protocol/   wire web↔server (zod) — único lugar del wire, lo impor
 server/src/
   main.ts            wiring, 10 Hz tick: brain.plan → esp.send → hub.broadcastState
   brain.ts           RobotState + reduce (puro) + plan (puro). Único escritor. No conoce wire.
-  perception.ts      FrameBus (latest-wins) + SceneReader/SceneRead + ReaderLoop (una lectura en vuelo)
-  readers.ts         GeminiReader | MockReader | ManualReader (dev)
+  perception.ts      FrameBus (latest-wins) + Reader/ReaderLoop genérico (escena y lookout)
+  readers.ts         Gemini/Mock/Manual + GeminiLookout/MockLookout
   esp.ts             contrato UDP: encodeCommand/parseInbound (puros) + EspLink
   hub.ts             WS por rol, zod en el borde, fan-out de frames, toStateMsg
 server/tools/esp-sim.ts   ESP32 falso
 server/test/              brain.test.ts, esp.test.ts (node:test)
-web/src/             main (rol por hash) · ws · camera · audio · face · control · viewer
+web/src/             main (rol por hash) · ws · camera · audio · face · lookout · control · viewer
 firmware/PROTOCOL.md contrato ESP32 (lo único nuestro ahí)
 docs/DESIGN.md       diseño y decisiones
 ```

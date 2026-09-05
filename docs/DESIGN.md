@@ -12,25 +12,31 @@ Robot de dos ruedas, **autónomo**, con un celular montado, que busca a Gaucho (
 
 ## Usage (caller's view)
 
-Operador: ver [README](../README.md). Un `pnpm dev`, un `pnpm sim:esp32`, tres URLs. Lo único que un humano toca durante la demo es **Arrancar / Parar** en `#control`.
+Operador: ver [README](../README.md). Un `pnpm dev`, un `pnpm sim:esp32`, cuatro URLs. Lo único que un humano toca durante la demo es **Arrancar / Parar** en `#control`.
 
 Wiring completo del server (`main.ts`, el único archivo que conoce a todos):
 
 ```ts
 const brain = new Brain();                                   // único escritor de RobotState
-const frames = new FrameBus();                               // frameId monotónico, latest-wins
+const frames: Record<Camera, FrameBus> = { face: new FrameBus(), lookout: new FrameBus() };
 const esp = new EspLink({ port: ESP_PORT, fixedPeer: env.ESP_IP });
-const loop = new ReaderLoop(frames, makeReader(env.READER, env),
+const loop = new ReaderLoop(frames.face, makeReader(env.READER, env),
   (r) => brain.dispatch({ type: 'scene', read: r }));        // dónde está Gaucho + qué hacer + pensamiento
+const lookoutLoop = new ReaderLoop(frames.lookout, makeLookoutReader(lookoutReaderKind(env), env),
+  (r) => brain.dispatch({ type: 'lookout', read: r }));      // hacia dónde girar en searching
 const hub = new Hub([http, https], {                         // valida (zod) y traduce wire → dominio; no decide
-  onFrame: (jpeg, dims) => { const f = frames.push(jpeg, dims); brain.dispatch({ type: 'frame', capturedAt: f.capturedAt }); },
+  onFrame: (camera, jpeg, dims) => {
+    const f = frames[camera].push(jpeg, dims);
+    if (camera === 'face') brain.dispatch({ type: 'frame', capturedAt: f.capturedAt });
+  },
   onEvent: (e) => brain.dispatch(e),                          // run: running | stopped
   onMark: (x, y) => { const r = loop.current(); if (r instanceof ManualReader) r.mark(x, y); },   // solo dev
   onReaderSwap: (kind) => loop.setReader(makeReader(kind, env)),
 });
-frames.subscribe((f) => hub.broadcastFrame(f));
+frames.face.subscribe((f) => hub.broadcastFrame(f));
 esp.onTelemetry((t, now) => brain.dispatch({ type: 'telemetry', distCm: t.distCm, yawDeg: t.yawDeg }, now));
 loop.start();
+lookoutLoop.start();
 setInterval(() => {                                          // 10 Hz: el único lugar que actúa
   const now = Date.now();
   const cmd = brain.plan(now);                               // RobotState → ActuatorCommand (puro, derivado)
@@ -59,9 +65,9 @@ assert.ok(plan(s, now + 900).drive.left > plan(s, now + 900).drive.right);   // 
 
 ## Shape
 
-**Datos primero.** `RobotState` (`brain.ts`) es la única verdad: `run: stopped | running`, `behavior: searching | chasing | found | lost` con `since`, `target` (cx, cy, size 0..1, `frameId`, `seenAt` = llegada de la lectura), `thought` (frase del LLM con `at`, la haya visto o no), `action` (la propuesta del LLM con `until` absoluto), `hits`, `esp`, `lastFrameAt`. Se modifica solo vía `reduce(state, event, now)`; la salida `plan(state, now) → ActuatorCommand {drive, servo, tone}` es pura y **derivada**.
+**Datos primero.** `RobotState` (`brain.ts`) es la única verdad: `run: stopped | running`, `behavior: searching | chasing | found | lost` con `since`, `target` (cx, cy, size 0..1, `frameId`, `seenAt` = llegada de la lectura), `lookout` (turn + `frameId` + `seenAt`, o null), `thought` (frase del LLM con `at`, la haya visto o no), `action` (la propuesta del LLM con `until` absoluto), `hits`, `esp`, `lastFrameAt`. Se modifica solo vía `reduce(state, event, now)`; la salida `plan(state, now) → ActuatorCommand {drive, servo, tone}` es pura y **derivada**.
 
-**Un solo escritor, sin humanos en el lazo.** LLM, frames, telemetría y reloj son *eventos*; el único evento humano es `run`. `plan` resuelve prioridades en un solo lugar: `stopped` > clamp de seguridad > show (`found` celebra quieta, `lost` llora quieta) > **acción fresca del LLM** > fallback local (P-control sobre el último rumbo en `chasing`, giro de búsqueda en `searching`).
+**Un solo escritor, sin humanos en el lazo.** LLM, frames, telemetría y reloj son *eventos*; el único evento humano es `run`. `plan` resuelve prioridades en un solo lugar: `stopped` > clamp de seguridad > show (`found` celebra quieta, `lost` llora quieta) > hint fresco del lookout (solo en `searching`) > **acción fresca del LLM** > fallback local (P-control sobre el último rumbo en `chasing`, giro de búsqueda en `searching`).
 
 **El LLM manda el path; el server garantiza que el show no dependa de su latencia.** Cada lectura trae `action {kind, speed, durationMs}`. `reduce` la guarda con `until = now + min(durationMs, 1500)` (desde que *llega*: Gemini tarda 2–3.5 s por frame con las fotos de referencia, medido; contada desde `capturedAt` ya vendría vencida); `plan` la obedece mientras `now < until`, con `speed ≤ 0.6`. Vencida, el P-control sobre el último `target` toma el control; si hace más de 5 s que no *llega* una lectura con target (≈ 1–2 lecturas sin verlo), `chasing → lost` (llora) → 3 s → `searching`. La falla de la API es un comportamiento guionado, no un freeze. Cuando el LLM no opina (`mock`, `manual`), `action` es `null` y el fallback local hace todo: la FSM es demostrable sin key.
 
@@ -71,9 +77,11 @@ assert.ok(plan(s, now + 900).drive.left > plan(s, now + 900).drive.right);   // 
 
 **Reader de un método.** `SceneReader.read(frame) → SceneRead` en dominio (0..1, `ActionKind` tipado). `ReaderLoop` mantiene **una** lectura en vuelo y al terminar toma `frames.latest()`: la latencia del modelo fija el Hz, nunca hay cola. Implementaciones: `gemini` (robotics-er-2 o 2.5-flash, structured output `{found, box_2d, confidence, action, thought}`, few-shot con fotos de Gaucho), `mock` (guion: demo sin cámara ni key), `manual` (tap en el video; solo desarrollo, para probar la FSM con video real). Swap en caliente desde `#control`.
 
+**Lookout.** Un segundo `FrameBus` + `ReaderLoop` (celu en estante, vista cenital) cuyo único consumidor es `driveFor` en `searching`. El chase egocéntrico sigue cerrado sobre la cámara de a bordo; el lookout solo reemplaza el giro ciego cuando el robot no ve a Gaucho. `chasing`, `found` y `lost` no lo leen. Sin cliente lookout el bus queda vacío, `RobotState.lookout` es null y la búsqueda es la de siempre.
+
 **Video: JPEG sobre WebSocket**, 480×360 q0.6 (~25 KB) a 5 fps ≈ 1 Mbit/s. Binario = 4 bytes `frameId` + JPEG; el server reenvía los mismos bytes a N viewers sin re-encode y se los da a Gemini tal cual. **WebRTC rechazado**: exige signaling, un peer por viewer y decodificar en Node para sacar JPEGs; su ventaja (30 fps) no la aprovecha un LLM a 1 Hz ni el jurado. `FrameBus.push` es la costura para otra fuente de video (ffmpeg desde RTSP, MJPEG de IP Webcam) si el celu falla.
 
-**Cliente: web en el navegador, una página, rol por hash.** `#face` (celu robot: cámara frontal por default para que cámara y cara miren igual; `?cam=environment`), `#control` (Arrancar/Parar, reader, estado, pensamiento del LLM), `#viewer` (jurado, N pantallas). Solo `#face` necesita HTTPS (mkcert + CA confiada; ngrok como pánico). Nativo/Expo no entra en 8 h y no da nada que el browser no dé.
+**Cliente: web en el navegador, una página, rol por hash.** `#face` (celu robot: cámara frontal por default para que cámara y cara miren igual; `?cam=environment`), `#lookout` (celu de techo: cámara trasera por default; `?cam=user`), `#control` (Arrancar/Parar, reader, estado, pensamiento del LLM, hint del lookout), `#viewer` (jurado, N pantallas). `#face` y `#lookout` necesitan HTTPS (mkcert + CA confiada; ngrok como pánico). Nativo/Expo no entra en 8 h y no da nada que el browser no dé.
 
 **Contrato ESP32: UDP texto, un mensaje de estado completo.** `S <seq> <left> <right> <deg1> <deg2> <tone>` a 10 Hz; `T` como telemetría/heartbeat; `H` broadcast para descubrimiento. `tone` es un *nivel*, no un evento. Canciones en el celu, tonos en el ESP32. Detalle en [`firmware/PROTOCOL.md`](../firmware/PROTOCOL.md).
 
