@@ -3,6 +3,8 @@ import type { Mood } from '@gaucho/protocol';
 
 export type Clip = 'love' | 'sad' | 'party' | 'beep';
 
+const ALL_CLIPS: Clip[] = ['love', 'sad', 'party', 'beep'];
+
 export function clipFor(mood: Mood): Clip | null {
   switch (mood) {
     case 'found':
@@ -25,14 +27,42 @@ export function clipFor(mood: Mood): Clip | null {
 }
 
 export class AudioPlayer {
+  private readonly elements = new Map<Clip, HTMLAudioElement>();
+
+  constructor() {
+    for (const clip of ALL_CLIPS) {
+      const el = new Audio(`/sounds/${clip}.mp3`);
+      el.preload = 'auto';
+      this.elements.set(clip, el);
+    }
+  }
+
   /** Llamar dentro de un gesto: crea/resume AudioContext y precarga los 4 clips. */
   async unlock(): Promise<void> {
-    throw new Error('not implemented');
+    for (const el of this.elements.values()) {
+      el.load();
+      try {
+        await el.play();
+        el.pause();
+        el.currentTime = 0;
+      } catch {
+        // missing file or autoplay policy
+      }
+    }
   }
+
   play(clip: Clip): void {
-    throw new Error('not implemented');
+    this.stop();
+    const el = this.elements.get(clip);
+    if (!el) return;
+    el.currentTime = 0;
+    void el.play().catch(() => {});
   }
+
   stop(): void {
-    throw new Error('not implemented');
+    for (const el of this.elements.values()) {
+      el.pause();
+      el.currentTime = 0;
+    }
   }
 }
