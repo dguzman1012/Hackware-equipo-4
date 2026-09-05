@@ -67,7 +67,7 @@ test('la duración de la acción se recorta a actionMaxMs y la velocidad a actio
   s = reduce(s, { type: 'scene', read: read(3, now, 0.5, { kind: 'forward', speed: 1, durationMs: 60000 }) }, now + 50);
   const d = plan(s, now + 100).drive;
   assert.ok(d.left <= T.actionSpeedCap && d.right <= T.actionSpeedCap);
-  assert.ok(s.action !== null && s.action.until <= now + T.actionMaxMs);
+  assert.ok(s.action !== null && s.action.until <= now + 50 + T.actionMaxMs, 'vence desde que llega la lectura');
 });
 
 test('lecturas fuera de orden y viejas se descartan', () => {

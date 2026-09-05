@@ -12,7 +12,7 @@ Diseño completo y por qué: [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ```bash
 pnpm install
-cp .env.example .env            # READER=mock por default (demo sin cámara ni key); READER=gemini + GEMINI_API_KEY
+cp .env.example .env            # READER=gemini + GEMINI_API_KEY por default; READER=mock para demo sin cámara ni key
 pnpm dev                        # server :8080 (+ :8443 si hay certs/) y vite build --watch
 pnpm sim:esp32                  # en otra terminal: ESP32 falso hasta que exista el firmware
 ```
