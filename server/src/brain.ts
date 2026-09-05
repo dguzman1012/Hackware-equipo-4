@@ -7,7 +7,7 @@
 //      sobre el último rumbo y la FSM de estados (lost → searching) sostienen el show;
 //  (5) este módulo no conoce wire types (ni UDP ni WS). `toStateMsg` vive en hub.ts.
 import type { ActionKind, Mood, RunState } from '@gaucho/protocol';
-import type { SceneRead } from './perception';
+import type { LookoutRead, SceneRead, Turn } from './perception';
 
 export type Ms = number;
 
@@ -41,12 +41,19 @@ export type Behavior =
   | { kind: 'found'; since: Ms; party: boolean } // cerca: celebra; party si es reencuentro
   | { kind: 'lost'; since: Ms }; // drama, luego searching
 
+export interface Lookout {
+  turn: Turn;
+  frameId: number;
+  seenAt: Ms; // llegada de la lectura, igual que Target
+}
+
 export interface RobotState {
   run: RunState;
   behavior: Behavior;
   target: Target | null; // última lectura válida
   thought: Thought | null; // última frase del LLM (captionOf la usa mientras sea fresca)
   action: PlannedAction | null; // última acción del LLM (puede estar vencida: plan() lo chequea)
+  lookout: Lookout | null; // hint del lookout; solo lo lee driveFor en searching
   hits: number; // lecturas válidas consecutivas (confirmHits filtra falsos positivos)
   lastFoundAt: Ms | null; // para decidir si un found es reencuentro (party)
   esp: { lastTelemetryAt: Ms | null; distCm: number | null; yawDeg: number | null };
@@ -62,6 +69,7 @@ export interface ActuatorCommand {
 // ---------- Eventos: todo actor externo habla así; nadie toca el estado ----------
 export type BrainEvent =
   | { type: 'scene'; read: SceneRead }
+  | { type: 'lookout'; read: LookoutRead }
   | { type: 'frame'; capturedAt: Ms }
   | { type: 'run'; run: RunState }
   | { type: 'telemetry'; distCm: number | null; yawDeg: number | null }
@@ -89,6 +97,8 @@ export const T = {
   obstacleCm: 20, // el firmware frena a 15; acá evitamos pedir lo imposible
   chase: { forward: 0.5, kTurn: 0.8, centerTol: 0.25 },
   searchSpin: 0.35,
+  lookoutMaxMs: 7000, // hint fresco ~2 lecturas del lookout después de llegar
+  lookoutForward: 0.3, // creep adelante en 'ahead' para que la cámara de a bordo confirme
   actionSpeedCap: 0.6, // techo a lo que pida el LLM: 1–2 s de latencia no pueden convertirse en un choque
 } as const;
 
@@ -105,6 +115,10 @@ function toTarget(read: SceneRead, t: NonNullable<SceneRead['target']>, now: Ms)
 
 function isTargetFresh(s: RobotState, now: Ms): boolean {
   return s.target !== null && now - s.target.seenAt <= T.lostAfterMs;
+}
+
+function lookoutFresh(s: RobotState, now: Ms): s is RobotState & { lookout: Lookout } {
+  return s.lookout !== null && now - s.lookout.seenAt <= T.lookoutMaxMs;
 }
 
 function searchingSpinDir(since: Ms, now: Ms): 1 | -1 {
@@ -172,6 +186,7 @@ export function initialState(now: Ms): RobotState {
     target: null,
     thought: null,
     action: null,
+    lookout: null,
     hits: 0,
     lastFoundAt: null,
     esp: { lastTelemetryAt: null, distCm: null, yawDeg: null },
@@ -209,6 +224,13 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
       const thought = read.caption ? { text: read.caption, at: now } : s.thought;
       const stepped = stepBehavior({ ...s, target, hits, action }, now);
       return { ...s, target, thought, hits, action, behavior: stepped.behavior, lastFoundAt: stepped.lastFoundAt };
+    }
+    case 'lookout': {
+      const { read } = e;
+      if (read.frameId <= (s.lookout?.frameId ?? -1)) return s;
+      if (now - read.capturedAt > T.readMaxAgeMs) return s;
+      if (read.turn === null) return s;
+      return { ...s, lookout: { turn: read.turn, frameId: read.frameId, seenAt: now } };
     }
     case 'frame':
       return { ...s, lastFrameAt: e.capturedAt };
@@ -326,7 +348,7 @@ function clampSafety(
   };
 }
 
-/** Puro y derivado. Prioridad: stopped > clamp de seguridad > show (found/lost) > acción del LLM > P-control/spin. */
+/** Puro y derivado. Prioridad: stopped > clamp de seguridad > show (found/lost) > lookout en searching > acción del LLM > P-control/spin. */
 export function plan(s: RobotState, now: Ms): ActuatorCommand {
   if (s.run === 'stopped') {
     return { drive: STOP_DRIVE, servo: SERVO_NEUTRAL, tone: 0 };
@@ -350,6 +372,20 @@ function driveFor(s: RobotState, now: Ms): { left: number; right: number } {
       if (actionFresh(s.action, now)) return fromAction(s.action);
       return s.target ? chase(s.target) : STOP_DRIVE;
     case 'searching':
+      if (lookoutFresh(s, now)) {
+        switch (s.lookout.turn) {
+          case 'ahead':
+            return { left: T.lookoutForward, right: T.lookoutForward };
+          case 'right':
+            return spin(1);
+          case 'left':
+            return spin(-1);
+          default: {
+            const _exhaustive: never = s.lookout.turn;
+            return _exhaustive;
+          }
+        }
+      }
       if (actionFresh(s.action, now)) return fromAction(s.action);
       return spin(b.spinDir);
     default: {

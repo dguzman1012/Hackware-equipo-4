@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { T, initialState, plan, reduce } from '../src/brain';
 import type { RobotState } from '../src/brain';
-import type { SceneRead } from '../src/perception';
+import type { LookoutRead, SceneRead } from '../src/perception';
 
 const STOP = { left: 0, right: 0 };
 
@@ -15,6 +15,20 @@ const read = (frameId: number, capturedAt: number, cx: number | null, action: Sc
   caption: '',
   latencyMs: 300,
 });
+
+const lookout = (frameId: number, capturedAt: number, turn: LookoutRead['turn']): LookoutRead => ({
+  frameId,
+  capturedAt,
+  turn,
+  confidence: 0.9,
+  latencyMs: 300,
+});
+
+/** running, searching, con un frame fresco para que el clamp de cámara no frene. */
+function searchingState(now = 100): RobotState {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  return reduce(s, { type: 'frame', capturedAt: now }, now);
+}
 
 /** running, con un frame fresco y dos lecturas seguidas de Gaucho a la derecha → chasing. */
 function chasingState(): { s: RobotState; now: number } {
@@ -102,4 +116,52 @@ test('clamp de seguridad: sin frames frescos no se mueve; con obstáculo no avan
   s = reduce(s, { type: 'telemetry', distCm: 10, yawDeg: null }, 300);
   const d = plan(s, 300).drive;
   assert.ok(!(d.left > 0 && d.right > 0), 'con obstáculo no avanza aunque el LLM pida forward');
+});
+
+test('searching + lookout right gira a la derecha', () => {
+  let s = searchingState(100);
+  s = reduce(s, { type: 'lookout', read: lookout(1, 100, 'right') }, 150);
+  const d = plan(s, 200).drive;
+  assert.ok(d.left > d.right, 'spin(1) = rueda izq adelante');
+});
+
+test('searching + lookout left gira a la izquierda', () => {
+  let s = searchingState(100);
+  s = reduce(s, { type: 'lookout', read: lookout(1, 100, 'left') }, 150);
+  const d = plan(s, 200).drive;
+  assert.ok(d.right > d.left, 'spin(-1) = rueda der adelante');
+});
+
+test('searching + lookout ahead avanza lookoutForward', () => {
+  let s = searchingState(100);
+  s = reduce(s, { type: 'lookout', read: lookout(1, 100, 'ahead') }, 150);
+  const d = plan(s, 200).drive;
+  assert.equal(d.left, T.lookoutForward);
+  assert.equal(d.right, T.lookoutForward);
+});
+
+test('lookout vencido cae al spin ciego', () => {
+  let withHint = searchingState(0);
+  withHint = reduce(withHint, { type: 'lookout', read: lookout(1, 0, 'right') }, 50);
+  const now = 50 + T.lookoutMaxMs + 1;
+  withHint = reduce(withHint, { type: 'frame', capturedAt: now }, now);
+  const without = reduce(searchingState(0), { type: 'frame', capturedAt: now }, now);
+  assert.deepEqual(plan(withHint, now).drive, plan(without, now).drive);
+});
+
+test('chasing ignora un lookout fresco', () => {
+  let { s, now } = chasingState();
+  s = reduce(s, { type: 'lookout', read: lookout(10, now, 'left') }, now + 10);
+  const d = plan(s, now + 20).drive;
+  assert.ok(d.left > d.right, 'P-control hacia cx=0.8; lookout left no manda');
+});
+
+test('lookout: frameId viejo y turn null no pisan el hint', () => {
+  let s = searchingState(100);
+  s = reduce(s, { type: 'lookout', read: lookout(2, 100, 'right') }, 150);
+  const stored = s.lookout;
+  s = reduce(s, { type: 'lookout', read: lookout(1, 120, 'left') }, 160);
+  assert.equal(s.lookout, stored, 'frameId menor no pisa');
+  s = reduce(s, { type: 'lookout', read: lookout(3, 130, null) }, 170);
+  assert.equal(s.lookout, stored, 'turn null deja el hint anterior');
 });
