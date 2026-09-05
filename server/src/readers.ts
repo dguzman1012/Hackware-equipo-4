@@ -132,7 +132,10 @@ export class GeminiReader implements SceneReader {
     this.referenceImages = opts.referenceImages;
   }
 
-  /** Errores de red/timeout/esquema se propagan: ReaderLoop loguea y hace backoff 1 s en vez de martillar la API. */
+  /**
+   * Errores de red/timeout/esquema se propagan: ReaderLoop loguea y hace backoff 1 s en vez de martillar la API.
+   * Sin httpOptions.timeout: la API lo toma como deadline y rechaza menos de 10 s; el corte a 4 s lo hace ReaderLoop.
+   */
   async read(frame: Frame): Promise<SceneRead> {
     const start = Date.now();
     const parts: Part[] = [];
@@ -148,7 +151,6 @@ export class GeminiReader implements SceneReader {
       config: {
         responseMimeType: 'application/json',
         responseJsonSchema: GEMINI_RESPONSE_SCHEMA,
-        httpOptions: { timeout: 4000 },
         thinkingConfig: thinkingConfigForModel(this.model),
       },
     });
