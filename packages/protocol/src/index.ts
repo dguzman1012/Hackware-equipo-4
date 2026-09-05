@@ -2,8 +2,14 @@
 // Texto = JSON validado con zod. Binario = 4 bytes uint32 BE frameId + JPEG.
 import { z } from 'zod';
 
-export const Role = z.enum(['face', 'control', 'viewer']);
+export const Role = z.enum(['face', 'lookout', 'control', 'viewer']);
 export type Role = z.infer<typeof Role>;
+
+export const Camera = z.enum(['face', 'lookout']);
+export type Camera = z.infer<typeof Camera>;
+
+export const Turn = z.enum(['left', 'right', 'ahead']);
+export type Turn = z.infer<typeof Turn>;
 
 export const Mood = z.enum(['searching', 'chasing', 'found', 'party', 'lost', 'stopped', 'offline']);
 export type Mood = z.infer<typeof Mood>;
@@ -49,10 +55,11 @@ export const StateMsg = z.object({
     })
     .nullable(),
   action: z.object({ kind: ActionKind, speed: z.number(), remainingMs: z.number() }).nullable(),
+  lookout: z.object({ turn: Turn, ageMs: z.number() }).nullable(),
   drive: z.object({ left: z.number(), right: z.number() }),
   esp: z.object({ online: z.boolean(), distCm: z.number().nullable(), yawDeg: z.number().nullable() }),
   reader: z.object({ kind: ReaderKind, latencyMs: z.number().nullable(), fps: z.number() }),
-  clients: z.object({ face: z.number(), control: z.number(), viewer: z.number() }),
+  clients: z.object({ face: z.number(), lookout: z.number(), control: z.number(), viewer: z.number() }),
 });
 export type StateMsg = z.infer<typeof StateMsg>;
 

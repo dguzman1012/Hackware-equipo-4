@@ -9,6 +9,7 @@ import {
   Role,
   decodeFrame,
   encodeFrame,
+  type Camera,
   type ReaderKind,
   type StateMsg,
 } from '@gaucho/protocol';
@@ -25,8 +26,8 @@ import {
 import type { Frame } from './perception';
 
 export interface HubHandlers {
-  /** role=face: bytes JPEG crudos + dims (frame_meta previo). */
-  onFrame: (jpeg: Uint8Array, dims: { width: number; height: number }) => void;
+  /** role=face|lookout: bytes JPEG crudos + dims (frame_meta previo). */
+  onFrame: (camera: Camera, jpeg: Uint8Array, dims: { width: number; height: number }) => void;
   /** role=control: run (arrancar/parar) ya traducido a evento de dominio. */
   onEvent: (e: BrainEvent) => void;
   /** role=control, solo desarrollo: tap sobre el video (reader manual). */
@@ -53,7 +54,7 @@ interface ClientMeta {
 type RoleKey = (typeof Role.options)[number];
 
 /**
- * WS en /ws?role=face|control|viewer sobre el/los servers http(s) que se le pasen (mismo Hub para :8080 y :8443).
+ * WS en /ws?role=face|lookout|control|viewer sobre el/los servers http(s) que se le pasen (mismo Hub para :8080 y :8443).
  * viewer es read-only: cualquier mensaje suyo se ignora y loguea.
  * Slow consumers: si bufferedAmount > 200 KB se le saltea el frame.
  */
@@ -62,6 +63,7 @@ export class Hub {
   private readonly handlers: HubHandlers;
   private readonly clients: Record<RoleKey, Set<WebSocket>> = {
     face: new Set(),
+    lookout: new Set(),
     control: new Set(),
     viewer: new Set(),
   };
@@ -114,9 +116,10 @@ export class Hub {
     }
   }
 
-  counts(): { face: number; control: number; viewer: number } {
+  counts(): { face: number; lookout: number; control: number; viewer: number } {
     return {
       face: this.clients.face.size,
+      lookout: this.clients.lookout.size,
       control: this.clients.control.size,
       viewer: this.clients.viewer.size,
     };
@@ -150,6 +153,9 @@ export class Hub {
             speed: action.speed,
             remainingMs: action.until - now,
           }
+        : null,
+      lookout: state.lookout
+        ? { turn: state.lookout.turn, ageMs: now - state.lookout.seenAt }
         : null,
       drive: cmd.drive,
       esp: {
@@ -194,7 +200,10 @@ export class Hub {
   private onMessage(ws: WebSocket, role: RoleKey, data: WebSocket.RawData, isBinary: boolean): void {
     switch (role) {
       case 'face':
-        this.onFaceMessage(ws, data, isBinary);
+        this.onCameraMessage(ws, 'face', data, isBinary);
+        break;
+      case 'lookout':
+        this.onCameraMessage(ws, 'lookout', data, isBinary);
         break;
       case 'control':
         this.onControlMessage(data, isBinary);
@@ -209,13 +218,18 @@ export class Hub {
     }
   }
 
-  private onFaceMessage(ws: WebSocket, data: WebSocket.RawData, isBinary: boolean): void {
+  private onCameraMessage(
+    ws: WebSocket,
+    camera: Camera,
+    data: WebSocket.RawData,
+    isBinary: boolean,
+  ): void {
     if (isBinary) {
       const buf = toUint8Array(data);
       const { jpeg } = decodeFrame(buf);
       const meta = this.meta.get(ws);
       const dims = meta?.dims ?? DEFAULT_DIMS;
-      this.handlers.onFrame(jpeg, dims);
+      this.handlers.onFrame(camera, jpeg, dims);
       return;
     }
 
@@ -224,7 +238,7 @@ export class Hub {
     try {
       parsed = JSON.parse(text);
     } catch {
-      this.logInvalid('face: invalid JSON');
+      this.logInvalid(`${camera}: invalid JSON`);
       return;
     }
 
@@ -237,7 +251,7 @@ export class Hub {
       return;
     }
 
-    this.logInvalid('face: ignored text message');
+    this.logInvalid(`${camera}: ignored text message`);
   }
 
   private onControlMessage(data: WebSocket.RawData, isBinary: boolean): void {

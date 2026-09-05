@@ -8,12 +8,13 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import qrcode from 'qrcode-terminal';
+import type { Camera } from '@gaucho/protocol';
 import { Brain } from './brain';
 import { ESP_PORT, EspLink } from './esp';
-import { parseEnv } from './env';
+import { lookoutReaderKind, parseEnv } from './env';
 import { Hub } from './hub';
 import { FrameBus, ReaderLoop } from './perception';
-import { ManualReader, makeReader } from './readers';
+import { ManualReader, makeLookoutReader, makeReader } from './readers';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleDir, '../..');
@@ -34,7 +35,7 @@ const MIME: Record<string, string> = {
 
 interface RequestCtx {
   hub: Hub;
-  frames: FrameBus;
+  frames: Record<Camera, FrameBus>;
   loop: ReaderLoop;
   esp: EspLink;
   webDistExists: boolean;
@@ -93,19 +94,22 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: RequestCt
   }
 
   if (method === 'GET' && urlPath === '/snapshot.jpg') {
-    const frame = ctx.frames.latest();
-    if (!frame) {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
-      res.end('no frame yet');
-      return;
-    }
-    res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' });
-    res.end(frame.jpeg);
+    handleSnapshot(res, ctx.frames.face);
+    return;
+  }
+
+  if (method === 'GET' && urlPath === '/lookout.jpg') {
+    handleSnapshot(res, ctx.frames.lookout);
     return;
   }
 
   if (method === 'GET' && urlPath === '/video.mjpg') {
-    handleVideoMjpg(req, res, ctx.frames);
+    handleVideoMjpg(req, res, ctx.frames.face);
+    return;
+  }
+
+  if (method === 'GET' && urlPath === '/lookout.mjpg') {
+    handleVideoMjpg(req, res, ctx.frames.lookout);
     return;
   }
 
@@ -157,6 +161,17 @@ function handleRequest(req: IncomingMessage, res: ServerResponse, ctx: RequestCt
   res.end('not found');
 }
 
+function handleSnapshot(res: ServerResponse, frames: FrameBus): void {
+  const frame = frames.latest();
+  if (!frame) {
+    res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+    res.end('no frame yet');
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' });
+  res.end(frame.jpeg);
+}
+
 function handleVideoMjpg(req: IncomingMessage, res: ServerResponse, frames: FrameBus): void {
   res.writeHead(200, {
     'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
@@ -190,14 +205,16 @@ function printStartup(ips: string[], env: ReturnType<typeof parseEnv>, httpsUp: 
   const ip = ips[0] ?? '127.0.0.1';
   const http = `http://${ip}:${env.PORT}`;
   const faceUrl = httpsUp ? `https://${ip}:${env.HTTPS_PORT}/#face` : `${http}/#face`;
+  const lookoutUrl = httpsUp ? `https://${ip}:${env.HTTPS_PORT}/#lookout` : `${http}/#lookout`;
 
-  console.log(`reader=${env.READER} esp_ip=${env.ESP_IP ?? 'auto'}`);
+  console.log(`reader=${env.READER} lookout=${lookoutReaderKind(env)} esp_ip=${env.ESP_IP ?? 'auto'}`);
   for (const addr of ips) console.log(`LAN ${addr}`);
   if (!httpsUp) console.warn('HTTPS no configurado: la cámara del celu necesita https (ver README, mkcert)');
-  console.log(`face (camera):  ${faceUrl}`);
-  console.log(`control:        ${http}/#control`);
-  console.log(`viewer:         ${http}/#viewer`);
-  console.log(`video (no JS):  ${http}/video.mjpg`);
+  console.log(`face (camera):     ${faceUrl}`);
+  console.log(`lookout (camera):  ${lookoutUrl}`);
+  console.log(`control:           ${http}/#control`);
+  console.log(`viewer:            ${http}/#viewer`);
+  console.log(`video (no JS):     ${http}/video.mjpg`);
   qrcode.generate(faceUrl, { small: true });
 }
 
@@ -207,10 +224,13 @@ export async function main(): Promise<void> {
   const webDistExists = existsSync(webDist);
 
   const brain = new Brain();
-  const frames = new FrameBus();
+  const frames: Record<Camera, FrameBus> = { face: new FrameBus(), lookout: new FrameBus() };
   const esp = new EspLink({ port: ESP_PORT, fixedPeer: env.ESP_IP });
-  const loop = new ReaderLoop(frames, makeReader(env.READER, env), (r) =>
+  const loop = new ReaderLoop(frames.face, makeReader(env.READER, env), (r) =>
     brain.dispatch({ type: 'scene', read: r }),
+  );
+  const lookoutLoop = new ReaderLoop(frames.lookout, makeLookoutReader(lookoutReaderKind(env), env), (r) =>
+    brain.dispatch({ type: 'lookout', read: r }),
   );
 
   let hub!: Hub;
@@ -242,9 +262,9 @@ export async function main(): Promise<void> {
   }
 
   hub = new Hub(servers, {
-    onFrame: (jpeg, dims) => {
-      const f = frames.push(jpeg, dims);
-      brain.dispatch({ type: 'frame', capturedAt: f.capturedAt });
+    onFrame: (camera, jpeg, dims) => {
+      const f = frames[camera].push(jpeg, dims);
+      if (camera === 'face') brain.dispatch({ type: 'frame', capturedAt: f.capturedAt });
     },
     onEvent: (e) => brain.dispatch(e),
     onMark: (x, y) => {
@@ -260,11 +280,12 @@ export async function main(): Promise<void> {
     },
   });
 
-  frames.subscribe((f) => hub.broadcastFrame(f));
+  frames.face.subscribe((f) => hub.broadcastFrame(f));
   esp.onTelemetry((t, now) =>
     brain.dispatch({ type: 'telemetry', distCm: t.distCm, yawDeg: t.yawDeg }, now),
   );
   loop.start();
+  lookoutLoop.start();
 
   const tick = setInterval(() => {
     const now = Date.now();
@@ -292,6 +313,7 @@ export async function main(): Promise<void> {
     clearInterval(tick);
     esp.close();
     loop.stop();
+    lookoutLoop.stop();
     httpServer.close();
     httpsServer?.close();
     process.exit(0);
