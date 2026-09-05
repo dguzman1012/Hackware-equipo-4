@@ -4,4 +4,10 @@ dist/
 certs/
 .env
 *.log
+.pio/
+.vscode/
+*.aiff
+*.wav
+tmp_audio/
 .DS_Store
+firmware/src/secrets.h

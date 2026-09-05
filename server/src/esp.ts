@@ -146,6 +146,10 @@ export class EspLink {
     return { address: `${peer.address}:${peer.port}`, fw: this.peerFw };
   }
 
+  lastSeq(): number {
+    return this.seq;
+  }
+
   close(): void {
     this.socket.close();
   }

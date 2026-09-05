@@ -93,6 +93,33 @@ test('sin ver a Gaucho: chasing → lost → searching, y el since no se reinici
   assert.equal(s.behavior.kind, 'searching');
 });
 
+test('tone: search silent, chase/found hold love, lost sad, stop silent', () => {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  s = reduce(s, { type: 'frame', capturedAt: 100 }, 100);
+  assert.equal(plan(s, 200).tone, 0, 'searching stays silent so the LEDs wink');
+
+  let { s: chase, now } = chasingState();
+  assert.equal(plan(chase, now).tone, 2);
+  assert.equal(plan(chase, now + 1000).tone, 2, 'chase holds love so the LEDs stay ON');
+
+  const close: SceneRead = {
+    ...read(3, now, 0.5),
+    target: { cx: 0.5, cy: 0.5, size: 0.4, confidence: 0.9 },
+  };
+  chase = reduce(chase, { type: 'frame', capturedAt: now }, now);
+  chase = reduce(chase, { type: 'scene', read: close }, now + 50);
+  assert.equal(chase.behavior.kind, 'found');
+  assert.equal(plan(chase, now + 60).tone, 2);
+
+  const lostAt = now + 50 + T.lostAfterMs + 1;
+  chase = reduce(chase, { type: 'tick' }, lostAt);
+  assert.equal(chase.behavior.kind, 'lost');
+  assert.equal(plan(chase, lostAt + 1).tone, 3);
+
+  chase = reduce(chase, { type: 'run', run: 'stopped' }, lostAt + 2);
+  assert.equal(plan(chase, lostAt + 3).tone, 0);
+});
+
 test('clamp de seguridad: sin frames frescos no se mueve; con obstáculo no avanza', () => {
   let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
   assert.deepEqual(plan(s, 10).drive, STOP, 'nunca hubo frame');

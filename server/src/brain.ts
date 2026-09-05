@@ -291,7 +291,7 @@ function poseFor(behavior: Behavior): { deg1: number; deg2: number } {
   }
 }
 
-function toneFor(s: RobotState, now: Ms): 0 | 1 | 2 | 3 | 4 {
+function toneFor(s: RobotState): 0 | 1 | 2 | 3 | 4 {
   if (s.run === 'stopped') return 0;
   switch (s.behavior.kind) {
     case 'found':
@@ -299,7 +299,7 @@ function toneFor(s: RobotState, now: Ms): 0 | 1 | 2 | 3 | 4 {
     case 'lost':
       return 3;
     case 'chasing':
-      return now - s.behavior.since < 300 ? 1 : 0;
+      return 2;
     case 'searching':
       return 0;
     default: {
@@ -335,7 +335,7 @@ export function plan(s: RobotState, now: Ms): ActuatorCommand {
   return {
     drive: clampSafety(s, now, driveFor(s, now)),
     servo: poseFor(s.behavior),
-    tone: toneFor(s, now),
+    tone: toneFor(s),
   };
 }
 
