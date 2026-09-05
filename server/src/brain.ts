@@ -18,7 +18,7 @@ export interface Target {
   size: number; // max(w,h) normalizado 0..1; proxy de cercanía
   confidence: number; // 0..1
   frameId: number; // monotónico, lo asigna FrameBus
-  seenAt: Ms; // capturedAt del frame, no la hora de respuesta del modelo
+  seenAt: Ms; // cuándo LLEGÓ la lectura. Medido desde capturedAt, con ~3 s de latencia el target vencía entre dos lecturas seguidas
 }
 
 /** "Pensamiento" en personaje de la última lectura, la haya visto o no. */
@@ -68,15 +68,16 @@ export type BrainEvent =
   | { type: 'tick' };
 
 // ---------- Constantes del lazo (lo que se tunea con el chasis real) ----------
-// Gemini tarda 1.8–3 s por frame (medido); ReaderLoop corta a 4 s. Las edades se miden desde capturedAt,
-// así que todo umbral de "frescura" tiene que superar esa latencia o el LLM nunca llega a mandar.
+// Gemini tarda 2–3.5 s por frame con las 9 fotos de referencia (medido); ReaderLoop corta a 6 s.
+// La edad de una LECTURA se mide desde capturedAt (readMaxAgeMs debe superar el timeout o toda lectura se descarta);
+// la frescura del TARGET y del thought se miden desde que llegan, para que no venzan entre dos lecturas consecutivas.
 export const T = {
-  readMaxAgeMs: 4500, // lectura más vieja que esto se descarta (> timeout de ReaderLoop)
+  readMaxAgeMs: 6500, // lectura más vieja que esto se descarta (> READ_TIMEOUT_MS de perception.ts)
   actionMaxMs: 1500, // ninguna acción del LLM vive más que esto desde que llega
   confirmHits: 2, // lecturas seguidas con target para pasar de searching a chasing
   minConfidence: 0.6,
-  lostAfterMs: 4000, // target visto hace más que esto en chasing/found → lost (≈ 2 s sin nueva lectura)
-  thoughtMaxMs: 6000, // la frase del LLM se muestra hasta esto después de llegar; luego la frase por behavior
+  lostAfterMs: 5000, // sin lectura con target hace más que esto en chasing/found → lost (≈ 1–2 lecturas sin verlo)
+  thoughtMaxMs: 8000, // la frase del LLM se muestra hasta esto después de llegar; luego la frase por behavior
   foundSizeMin: 0.35, // target.size ≥ esto (o distCm < foundDistCm) → found
   foundDistCm: 30,
   celebrateMs: 4000,
@@ -98,8 +99,8 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, n));
 }
 
-function toTarget(read: SceneRead, t: NonNullable<SceneRead['target']>): Target {
-  return { ...t, frameId: read.frameId, seenAt: read.capturedAt };
+function toTarget(read: SceneRead, t: NonNullable<SceneRead['target']>, now: Ms): Target {
+  return { ...t, frameId: read.frameId, seenAt: now };
 }
 
 function isTargetFresh(s: RobotState, now: Ms): boolean {
@@ -201,7 +202,7 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
       if (!read.target || read.target.confidence < T.minConfidence) {
         hits = 0;
       } else {
-        target = toTarget(read, read.target);
+        target = toTarget(read, read.target, now);
         hits += 1;
       }
 

@@ -27,7 +27,7 @@ function confidenceColor(confidence: number): string {
   return '#ef4444';
 }
 
-const TARGET_MAX_AGE_MS = 4000; // = T.lostAfterMs del server; ageMs se mide desde el frame, y Gemini tarda ~2 s
+const TARGET_MAX_AGE_MS = 5000; // = T.lostAfterMs del server (ageMs se mide desde que llegó la lectura)
 
 function drawOverlay(ctx: CanvasRenderingContext2D, s: StateMsg, W: number, H: number): void {
   if (s.target && s.target.ageMs < TARGET_MAX_AGE_MS) {

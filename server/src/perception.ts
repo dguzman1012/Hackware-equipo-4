@@ -89,7 +89,7 @@ export interface SceneReader {
   read(frame: Frame): Promise<SceneRead>;
 }
 
-const READ_TIMEOUT_MS = 4000;
+const READ_TIMEOUT_MS = 6000; // Gemini con referencias: 2–3.5 s típico, 4.2 s visto en frío. brain.T.readMaxAgeMs debe superarlo
 const ERROR_BACKOFF_MS = 1000;
 const STATS_FPS_WINDOW_MS = 5000;
 

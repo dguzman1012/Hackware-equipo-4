@@ -256,10 +256,14 @@ export function makeReader(kind: ReaderKind, env: Env): SceneReader {
         throw new Error('READER=gemini requiere GEMINI_API_KEY');
       }
       const gauchoDir = path.join(moduleDir, '../assets/gaucho');
+      const referenceImages = loadReferenceImages(gauchoDir);
+      const refKb = Math.round(referenceImages.reduce((n, img) => n + img.byteLength, 0) / 1024);
+      // Van en CADA request: 9 fotos @384px ≈ 300 KB y +1 s de latencia; @640px (~830 KB) ya roza el timeout.
+      console.log(`[gemini] ${referenceImages.length} fotos de referencia (${refKb} KB por lectura)${refKb > 500 ? ' — PESADAS, achicar a ≤384px' : ''}`);
       return new GeminiReader({
         apiKey: env.GEMINI_API_KEY,
         model: env.GEMINI_MODEL,
-        referenceImages: loadReferenceImages(gauchoDir),
+        referenceImages,
       });
     }
     case 'mock':
