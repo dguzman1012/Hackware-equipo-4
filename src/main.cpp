@@ -1,48 +1,41 @@
 #include <Arduino.h>
 
-#include "hola_garu.h"
+#include "leds.h"
+#include "motors.h"
 
-constexpr int AUDIO_PIN = 4;
-constexpr int AUDIO_CHANNEL = 0;
-constexpr int AUDIO_TIMER_BITS = 8;
-constexpr int PWM_CARRIER_HZ = 125000;
-
-void audioStop() {
-    ledcWrite(AUDIO_CHANNEL, 0);
-}
-
-void playHolaGaru() {
-    const uint32_t stepUs = 1000000UL / HOLA_GARU_RATE;
-    uint32_t nextUs = micros();
-
-    for (size_t i = 0; i < HOLA_GARU_LEN; ++i) {
-        const uint8_t sample = pgm_read_byte(&HOLA_GARU_PCM[i]);
-        ledcWrite(AUDIO_CHANNEL, sample);
-        nextUs += stepUs;
-        while (static_cast<int32_t>(nextUs - micros()) > 0) {
-        }
-    }
-
-    audioStop();
+void runStep(const char* name, void (*action)(), void (*showLeds)(), int durationMs) {
+    Serial.println(name);
+    showLeds();
+    action();
+    delay(durationMs);
+    motorsStop();
+    ledsOff();
+    delay(400);
 }
 
 void setup() {
     Serial.begin(115200);
     delay(1000);
-
-    ledcSetup(AUDIO_CHANNEL, PWM_CARRIER_HZ, AUDIO_TIMER_BITS);
-    ledcAttachPin(AUDIO_PIN, AUDIO_CHANNEL);
-    audioStop();
+    motorsBegin();
+    ledsBegin();
 
     Serial.println("================================");
-    Serial.println("PUCCA BOT VOICE READY");
-    Serial.println("GPIO4  -> speaker +");
-    Serial.println("GND    -> speaker -");
+    Serial.println("PUCCA BOT MOTORS + LEDS READY");
+    Serial.println("D25 -> IN1  left");
+    Serial.println("D26 -> IN2  left");
+    Serial.println("D27 -> IN3  right");
+    Serial.println("D33 -> IN4  right");
+    Serial.println("D18 -> LED left  (220 ohm)");
+    Serial.println("D19 -> LED right (220 ohm)");
+    Serial.println("Lift the wheels before the test.");
     Serial.println("================================");
 }
 
 void loop() {
-    Serial.println("HOLA GAUCHO, TE AMO");
-    playHolaGaru();
+    runStep("FORWARD", motorsForward, ledsBoth, 5000);
+    runStep("BACKWARD", motorsBackward, ledsBoth, 5000);
+    runStep("ROTATE LEFT", motorsRotateLeft, ledsLeft, 5000);
+    runStep("ROTATE RIGHT", motorsRotateRight, ledsRight, 5000);
+    Serial.println("PAUSE");
     delay(2500);
 }
