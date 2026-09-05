@@ -12,11 +12,28 @@ function clamp(n: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, n));
 }
 
+function formatLookout(s: StateMsg): string {
+  if (!s.lookout) return 'lookout: sin dato';
+  const age = `${(s.lookout.ageMs / 1000).toFixed(1)} s`;
+  switch (s.lookout.turn) {
+    case 'left':
+      return `lookout: → izquierda · ${age}`;
+    case 'right':
+      return `lookout: → derecha · ${age}`;
+    case 'ahead':
+      return `lookout: → adelante · ${age}`;
+    default: {
+      const _exhaustive: never = s.lookout.turn;
+      return _exhaustive;
+    }
+  }
+}
+
 function formatControlHeader(s: StateMsg): string {
   const run = s.run === 'running' ? '▶ running' : '■ stopped';
   const esp = s.esp.online ? `esp ✓ ${s.esp.distCm ?? '?'}cm` : 'esp ✗';
   const lat = s.reader.latencyMs != null ? `${s.reader.latencyMs}ms` : '—';
-  const clients = `face:${s.clients.face} ctrl:${s.clients.control} view:${s.clients.viewer}`;
+  const clients = `face:${s.clients.face} look:${s.clients.lookout} ctrl:${s.clients.control} view:${s.clients.viewer}`;
   const drive = `L${s.drive.left.toFixed(2)} R${s.drive.right.toFixed(2)}`;
   return `${run} · ${FACE[s.mood].emoji} ${s.mood} · ${esp} · ${s.reader.kind} ${lat} ${s.reader.fps.toFixed(1)}fps · ${clients} · ${drive}`;
 }
@@ -66,13 +83,22 @@ export function mountControl(root: HTMLElement): void {
 
   controls.append(runBtn, stopBtn, readerSelect);
 
+  const lookoutThumb = document.createElement('img');
+  lookoutThumb.className = 'control-lookout-thumb';
+  lookoutThumb.src = '/lookout.mjpg';
+  lookoutThumb.alt = 'lookout';
+
+  const lookoutEl = document.createElement('div');
+  lookoutEl.className = 'control-lookout';
+  lookoutEl.textContent = 'lookout: sin dato';
+
   const caption = document.createElement('div');
   caption.className = 'control-caption';
 
   const actionEl = document.createElement('div');
   actionEl.className = 'control-action';
 
-  root.append(conn, header, viewerRoot, hint, controls, caption, actionEl);
+  root.append(conn, header, viewerRoot, lookoutThumb, lookoutEl, hint, controls, caption, actionEl);
 
   const view = drawViewer(viewerRoot);
 
@@ -96,6 +122,7 @@ export function mountControl(root: HTMLElement): void {
   ws.onState((s) => {
     view.showState(s);
     header.textContent = formatControlHeader(s);
+    lookoutEl.textContent = formatLookout(s);
     readerSelect.value = s.reader.kind;
     caption.textContent = s.caption;
     actionEl.textContent = formatAction(s);

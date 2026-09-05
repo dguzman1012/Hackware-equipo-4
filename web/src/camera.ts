@@ -12,9 +12,13 @@ export interface CameraOptions {
 
 export const DEFAULT_CAMERA: CameraOptions = { facing: 'user', width: 480, height: 360, fps: 5, quality: 0.6 };
 
-export function cameraOptionsFromUrl(search: string): CameraOptions {
+export function cameraOptionsFromUrl(
+  search: string,
+  defaultFacing: CameraOptions['facing'] = 'user',
+): CameraOptions {
   const cam = new URLSearchParams(search).get('cam');
-  return { ...DEFAULT_CAMERA, facing: cam === 'environment' ? 'environment' : 'user' };
+  const facing = cam === 'environment' || cam === 'user' ? cam : defaultFacing;
+  return { ...DEFAULT_CAMERA, facing };
 }
 
 export class Camera {

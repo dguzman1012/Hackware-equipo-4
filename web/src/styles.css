@@ -91,6 +91,28 @@ body.debug #cam {
   display: none;
 }
 
+/* ---- lookout ---- */
+.lookout {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  padding: 1rem;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.lookout-status {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  opacity: 0.6;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+}
+
 /* ---- viewer / control video ---- */
 .viewer {
   display: flex;
@@ -213,6 +235,23 @@ body.debug #cam {
 }
 
 .control-action {
+  background: #141414;
+  border-radius: 6px;
+}
+
+.control-lookout-thumb {
+  max-width: 240px;
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: #111;
+  display: block;
+}
+
+.control-lookout {
+  font-size: 0.9rem;
+  font-family: ui-monospace, monospace;
+  padding: 0.4rem 0.5rem;
   background: #141414;
   border-radius: 6px;
 }
