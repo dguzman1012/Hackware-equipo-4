@@ -1,6 +1,6 @@
 // Frames + lectura de escena. El reader devuelve dominio (0..1, acciones tipadas). Lo que hable Gemini
 // (0..1000, JSON) muere en readers.ts.
-import type { ActionKind, ReaderKind } from '@gaucho/protocol';
+import type { ActionKind, ReaderKind, Turn } from '@gaucho/protocol';
 import type { Ms } from './brain';
 
 export interface Frame {
@@ -84,10 +84,22 @@ export interface SceneRead {
   latencyMs: number;
 }
 
-export interface SceneReader {
-  readonly kind: ReaderKind;
-  read(frame: Frame): Promise<SceneRead>;
+export type { Turn };
+
+export interface LookoutRead {
+  frameId: number;
+  capturedAt: Ms;
+  turn: Turn | null; // null = lookout could not tell (robot or Gaucho not visible)
+  confidence: number;
+  latencyMs: number;
 }
+
+export interface Reader<R extends { latencyMs: number }> {
+  readonly kind: ReaderKind;
+  read(frame: Frame): Promise<R>;
+}
+export type SceneReader = Reader<SceneRead>;
+export type LookoutReader = Reader<LookoutRead>;
 
 const READ_TIMEOUT_MS = 6000; // Gemini con referencias: 2–3.5 s típico, 4.2 s visto en frío. brain.T.readMaxAgeMs debe superarlo
 const ERROR_BACKOFF_MS = 1000;
@@ -121,7 +133,11 @@ function waitForFrame(frames: FrameBus, afterFrameId: number | null, running: ()
   });
 }
 
-async function readWithTimeout(reader: SceneReader, frame: Frame, ms: number): Promise<SceneRead> {
+async function readWithTimeout<R extends { latencyMs: number }>(
+  reader: Reader<R>,
+  frame: Frame,
+  ms: number,
+): Promise<R> {
   let timer: NodeJS.Timeout | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(`read timeout after ${ms}ms`)), ms);
@@ -133,7 +149,7 @@ async function readWithTimeout(reader: SceneReader, frame: Frame, ms: number): P
   }
 }
 
-export class ReaderLoop {
+export class ReaderLoop<R extends { latencyMs: number } = SceneRead> {
   private running = false;
   private lastProcessedFrameId: number | null = null;
   private readerGeneration = 0;
@@ -143,8 +159,8 @@ export class ReaderLoop {
 
   constructor(
     private readonly frames: FrameBus,
-    private reader: SceneReader,
-    private readonly onRead: (r: SceneRead) => void,
+    private reader: Reader<R>,
+    private readonly onRead: (r: R) => void,
   ) {}
 
   start(): void {
@@ -157,12 +173,12 @@ export class ReaderLoop {
     this.running = false;
   }
 
-  setReader(r: SceneReader): void {
+  setReader(r: Reader<R>): void {
     this.reader = r;
     this.readerGeneration++;
   }
 
-  current(): SceneReader {
+  current(): Reader<R> {
     return this.reader;
   }
 
