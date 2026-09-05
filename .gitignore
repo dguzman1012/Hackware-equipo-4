@@ -5,3 +5,4 @@ certs/
 .env
 *.log
 .DS_Store
+packages/twitter-bot/data/*.json
