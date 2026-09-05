@@ -11,6 +11,7 @@ const EnvSchema = z
     GEMINI_API_KEY: z.string().optional(),
     GEMINI_MODEL: z.string().default('gemini-robotics-er-2-preview'),
     ESP_IP: z.string().optional(),
+    FOUND_TWEET_COOLDOWN_MS: z.coerce.number().int().nonnegative().default(10 * 60 * 1000),
   })
   .refine((e) => e.READER !== 'gemini' || Boolean(e.GEMINI_API_KEY), {
     message: 'READER=gemini requiere GEMINI_API_KEY',

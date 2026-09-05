@@ -48,6 +48,9 @@ importers:
       qrcode-terminal:
         specifier: ^0.12.0
         version: 0.12.0
+      twitter-bot:
+        specifier: workspace:*
+        version: link:../packages/twitter-bot
       ws:
         specifier: ^8.18.0
         version: 8.21.3

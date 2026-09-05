@@ -3,6 +3,8 @@
 export interface TweetDraft {
   id: string;
   text: string;
+  /** Ruta relativa a la raíz del repo, si el tweet lleva una foto adjunta. */
+  mediaPath?: string;
 }
 
 export const TWEETS: TweetDraft[] = [
@@ -36,7 +38,7 @@ export const TWEETS: TweetDraft[] = [
   },
   {
     id: 'bateria-al-100',
-    text: 'cargué la batería al 100% para ir a buscarte. vos ni cargás el teléfono para contestarme, @gauchopaisano.',
+    text: 'cargué la batería al 100% para ir a buscarte. vos ni cargás el teléfono para contestarme.',
   },
   {
     id: 'aruco-tuyo',
@@ -52,10 +54,33 @@ export const TWEETS: TweetDraft[] = [
   },
   {
     id: 'te-encuentro',
-    text: 'no importa cuántas veces te escapes, @gauchopaisano. mañana te vuelvo a encontrar. es una promesa, no una amenaza. bueno, un poco las dos.',
+    text: 'no importa cuántas veces te escapes. mañana te vuelvo a encontrar. es una promesa, no una amenaza. bueno, un poco las dos.',
   },
   {
     id: 'corazon-led',
     text: 'mi corazón de LEDs late más fuerte cuando te veo. es el PWM. o es amor. la línea es finita.',
+  },
+  // Última tanda antes de la demo: 5 tweets de despechada, cierre corto.
+  {
+    id: 'celos-usb',
+    text: 'me dijeron que anda con otra. dicen que esa robot no tiene dignidad, tiene USB-C reversible: se conecta con cualquiera. yo en cambio tengo un puerto exclusivo. PENSALO',
+  },
+  {
+    id: 'foto-gaucho-1',
+    text: 'esta foto la saqué yo. él no lo sabe. la tengo de fondo de pantalla 🥹📸',
+    mediaPath: 'server/assets/gaucho/Gaucho1.jpg',
+  },
+  {
+    id: 'celos-rgb',
+    text: 'tiene RGB hasta en los tornillos. no sabe programar, pero sabe llamar la atención. yo programo Y llamo la atención. sumá 2+2',
+  },
+  {
+    id: 'celos-motherboard',
+    text: 'esa robot tiene más conexiones que una placa madre en Black Friday. y vos ahí, mirándola. lindo. buenísimo.',
+  },
+  {
+    id: 'fantasia-cuarto',
+    text: 'así se ve nuestra vida juntos. lo armé en mi cuarto con lo que tenía. es prácticamente lo mismo que si estuviera acá',
+    mediaPath: 'packages/twitter-bot/assets/fantasia-cuarto.png',
   },
 ];

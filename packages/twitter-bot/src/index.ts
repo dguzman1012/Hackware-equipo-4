@@ -29,7 +29,7 @@ const stop = runLoop({
   intervalMs: env.tweetIntervalMs,
   loadState: () => loadState(stateFile),
   saveState: (s) => saveState(stateFile, s),
-  postTweet: (text) => client.postTweet(text),
+  postTweet: (tweet) => client.postTweet(tweet),
 });
 
 process.on('SIGINT', () => {

@@ -8,12 +8,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import qrcode from 'qrcode-terminal';
-import { Brain } from './brain';
+import { postNow } from 'twitter-bot';
+import { Brain, type Behavior } from './brain';
 import { ESP_PORT, EspLink } from './esp';
 import { parseEnv } from './env';
 import { Hub } from './hub';
 import { FrameBus, ReaderLoop } from './perception';
 import { ManualReader, makeReader } from './readers';
+import { FOUND_TWEET_TEXT, shouldTweetFound } from './social';
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(moduleDir, '../..');
@@ -266,13 +268,26 @@ export async function main(): Promise<void> {
   );
   loop.start();
 
+  let previousBehaviorKind: Behavior['kind'] | null = null;
+  let lastFoundTweetAt = 0;
+
   const tick = setInterval(() => {
     const now = Date.now();
     const cmd = brain.plan(now);
     esp.send(cmd);
+    const state = brain.snapshot();
+
+    if (shouldTweetFound(previousBehaviorKind, state, lastFoundTweetAt, now, env.FOUND_TWEET_COOLDOWN_MS)) {
+      lastFoundTweetAt = now;
+      postNow({ id: 'found-live', text: FOUND_TWEET_TEXT }).catch((err: unknown) =>
+        console.error('[main] no se pudo postear el hallazgo:', err instanceof Error ? err.message : err),
+      );
+    }
+    previousBehaviorKind = state.behavior.kind;
+
     hub.broadcastState(
       hub.toStateMsg({
-        state: brain.snapshot(),
+        state,
         cmd,
         reader: loop.stats(),
         now,
