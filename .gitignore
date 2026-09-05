@@ -1,0 +1,6 @@
+.pio/
+.vscode/
+*.aiff
+*.wav
+tmp_audio/
+.DS_Store
