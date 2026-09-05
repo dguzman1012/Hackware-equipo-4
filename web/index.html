@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <title>La novia de Gaucho</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <!-- iOS: el <video> tiene que existir en el DOM (1x1 px) para que getUserMedia arranque por gesto -->
+    <video id="cam" playsinline muted autoplay></video>
+    <div id="app"></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

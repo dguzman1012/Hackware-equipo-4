@@ -1,0 +1,27 @@
+{
+  "name": "server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "sim:esp32": "tsx tools/esp-sim.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@gaucho/protocol": "workspace:*",
+    "@google/genai": "^1.0.0",
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.18.0",
+    "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/qrcode-terminal": "^0.12.2",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

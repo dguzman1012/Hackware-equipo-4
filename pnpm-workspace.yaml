@@ -1,0 +1,9 @@
+packages:
+  - packages/*
+  - server
+  - web
+
+allowBuilds:
+  '@google/genai': true
+  esbuild: true
+  protobufjs: true
