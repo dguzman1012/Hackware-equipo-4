@@ -12,7 +12,7 @@ export const FACE: Record<Mood, { emoji: string; bg: string }> = {
   found: { emoji: '❤️', bg: '#dc2626' },
   party: { emoji: '🎉', bg: '#7c3aed' },
   lost: { emoji: '😢', bg: '#4b5563' },
-  puppet: { emoji: '🎮', bg: '#6d28d9' },
+  stopped: { emoji: '😴', bg: '#374151' },
   offline: { emoji: '💤', bg: '#000000' },
 };
 

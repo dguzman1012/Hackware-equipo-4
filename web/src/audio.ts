@@ -14,7 +14,7 @@ export function clipFor(mood: Mood): Clip | null {
     case 'chasing':
       return 'beep';
     case 'searching':
-    case 'puppet':
+    case 'stopped':
     case 'offline':
       return null;
     default: {

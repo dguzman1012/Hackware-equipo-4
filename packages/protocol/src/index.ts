@@ -2,38 +2,37 @@
 // Texto = JSON validado con zod. Binario = 4 bytes uint32 BE frameId + JPEG.
 import { z } from 'zod';
 
-export const Role = z.enum(['face', 'pilot', 'viewer']);
+export const Role = z.enum(['face', 'control', 'viewer']);
 export type Role = z.infer<typeof Role>;
 
-export const Mood = z.enum(['searching', 'chasing', 'found', 'party', 'lost', 'puppet', 'offline']);
+export const Mood = z.enum(['searching', 'chasing', 'found', 'party', 'lost', 'stopped', 'offline']);
 export type Mood = z.infer<typeof Mood>;
 
-export const Mode = z.enum(['auto', 'puppet']);
-export type Mode = z.infer<typeof Mode>;
+/** El robot es autónomo. Lo único que decide un humano es si está corriendo o parado. */
+export const RunState = z.enum(['stopped', 'running']);
+export type RunState = z.infer<typeof RunState>;
 
-export const DetectorKind = z.enum(['gemini', 'mock', 'manual']);
-export type DetectorKind = z.infer<typeof DetectorKind>;
+export const ReaderKind = z.enum(['gemini', 'mock', 'manual']);
+export type ReaderKind = z.infer<typeof ReaderKind>;
+
+export const ActionKind = z.enum(['forward', 'left', 'right', 'back', 'stop']);
+export type ActionKind = z.infer<typeof ActionKind>;
 
 // ---- cliente -> server ----
-export const StickMsg = z.object({
-  t: z.literal('stick'),
-  x: z.number().min(-1).max(1), // + derecha
-  y: z.number().min(-1).max(1), // + adelante
-});
-export const ModeMsg = z.object({ t: z.literal('mode'), mode: Mode });
-export const GestureMsg = z.object({ t: z.literal('gesture'), name: z.enum(['heart', 'wave']) });
+export const RunMsg = z.object({ t: z.literal('run'), run: RunState });
+/** Solo desarrollo (reader manual): tap sobre el video = "ahí está Gaucho". */
 export const MarkMsg = z.object({ t: z.literal('mark'), x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
-export const DetectorMsg = z.object({ t: z.literal('detector'), kind: DetectorKind });
+export const ReaderMsg = z.object({ t: z.literal('reader'), kind: ReaderKind });
 export const FrameMetaMsg = z.object({ t: z.literal('frame_meta'), width: z.number().int(), height: z.number().int() });
 
-export const ClientMsg = z.discriminatedUnion('t', [StickMsg, ModeMsg, GestureMsg, MarkMsg, DetectorMsg, FrameMetaMsg]);
+export const ClientMsg = z.discriminatedUnion('t', [RunMsg, MarkMsg, ReaderMsg, FrameMetaMsg]);
 export type ClientMsg = z.infer<typeof ClientMsg>;
 
 // ---- server -> todos (10 Hz) ----
 export const StateMsg = z.object({
   t: z.literal('state'),
   mood: Mood,
-  mode: Mode,
+  run: RunState,
   behavior: z.string(),
   caption: z.string(),
   target: z
@@ -46,10 +45,11 @@ export const StateMsg = z.object({
       ageMs: z.number(),
     })
     .nullable(),
+  action: z.object({ kind: ActionKind, speed: z.number(), remainingMs: z.number() }).nullable(),
   drive: z.object({ left: z.number(), right: z.number() }),
   esp: z.object({ online: z.boolean(), distCm: z.number().nullable(), yawDeg: z.number().nullable() }),
-  detector: z.object({ kind: DetectorKind, latencyMs: z.number().nullable(), fps: z.number() }),
-  clients: z.object({ face: z.number(), pilot: z.number(), viewer: z.number() }),
+  reader: z.object({ kind: ReaderKind, latencyMs: z.number().nullable(), fps: z.number() }),
+  clients: z.object({ face: z.number(), control: z.number(), viewer: z.number() }),
 });
 export type StateMsg = z.infer<typeof StateMsg>;
 

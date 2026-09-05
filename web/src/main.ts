@@ -1,7 +1,7 @@
-// Una página, tres roles por hash: #face (celu robot), #pilot (operador), #viewer (jurado, default).
+// Una página, tres roles por hash: #face (celu robot), #control (arrancar/parar), #viewer (jurado, default).
 import { Role } from '@gaucho/protocol';
+import { mountControl } from './control';
 import { mountFace } from './face';
-import { mountPilot } from './pilot';
 import { mountViewer } from './viewer';
 
 const app = document.getElementById('app');
@@ -14,8 +14,8 @@ switch (role) {
   case 'face':
     mountFace(app);
     break;
-  case 'pilot':
-    mountPilot(app);
+  case 'control':
+    mountControl(app);
     break;
   case 'viewer':
     mountViewer(app);

@@ -41,7 +41,7 @@ export class EspLink {
     throw new Error('not implemented');
   }
   peer(): { address: string; fw: string | null } | null {
-    throw new Error('not implemented'); // para mostrar en el piloto
+    throw new Error('not implemented'); // para mostrar en #control
   }
   close(): void {
     throw new Error('not implemented');

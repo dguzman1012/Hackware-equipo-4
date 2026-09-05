@@ -2,10 +2,12 @@
 // Invariantes:
 //  (1) solo `reduce` produce un RobotState nuevo;
 //  (2) `plan` es una función del estado, no guarda nada: no existe un "comando actual" aparte;
-//  (3) toda decisión de "quién mueve" vive en `mode` y se resuelve en `plan`;
-//  (4) este módulo no conoce wire types (ni UDP ni WS). `toStateMsg` vive en hub.ts.
-import type { Mode, Mood } from '@gaucho/protocol';
-import type { Detection } from './perception';
+//  (3) el robot es autónomo: ningún humano decide movimiento. Lo único humano es run: stopped | running;
+//  (4) la acción que propone el LLM se obedece mientras esté fresca; si expira o la API tarda, el P-control
+//      sobre el último rumbo y la FSM de estados (lost → searching) sostienen el show;
+//  (5) este módulo no conoce wire types (ni UDP ni WS). `toStateMsg` vive en hub.ts.
+import type { ActionKind, Mood, RunState } from '@gaucho/protocol';
+import type { SceneRead } from './perception';
 
 export type Ms = number;
 
@@ -17,31 +19,32 @@ export interface Target {
   confidence: number; // 0..1
   frameId: number; // monotónico, lo asigna FrameBus
   seenAt: Ms; // capturedAt del frame, no la hora de respuesta del modelo
-  caption: string; // "pensamiento" en personaje que devuelve el detector ('' si no hay)
+  caption: string; // "pensamiento" en personaje que devuelve el reader ('' si no hay)
+}
+
+/** Acción propuesta por el LLM, ya con vencimiento absoluto. */
+export interface PlannedAction {
+  kind: ActionKind;
+  speed: number; // 0..1
+  until: Ms; // capturedAt + min(durationMs, T.actionMaxMs)
+  frameId: number;
 }
 
 export type Behavior =
   | { kind: 'searching'; since: Ms; spinDir: 1 | -1 } // gira despacio alternando cada spinFlipMs
-  | { kind: 'chasing'; since: Ms } // avanza + corrige rumbo hacia target.cx
+  | { kind: 'chasing'; since: Ms } // se acerca a Gaucho
   | { kind: 'found'; since: Ms; party: boolean } // cerca: celebra; party si es reencuentro
   | { kind: 'lost'; since: Ms }; // drama, luego searching
 
-export interface Stick {
-  x: number; // + derecha
-  y: number; // + adelante
-  at: Ms;
-}
-
 export interface RobotState {
-  mode: Mode;
+  run: RunState;
   behavior: Behavior;
-  target: Target | null; // última detección válida (se actualiza también en puppet: el viewer muestra bbox)
-  hits: number; // detecciones válidas consecutivas (CONFIRM_HITS filtra falsos positivos)
+  target: Target | null; // última lectura válida
+  action: PlannedAction | null; // última acción del LLM (puede estar vencida: plan() lo chequea)
+  hits: number; // lecturas válidas consecutivas (confirmHits filtra falsos positivos)
   lastFoundAt: Ms | null; // para decidir si un found es reencuentro (party)
-  stick: Stick;
-  gesture: { name: 'heart' | 'wave'; until: Ms } | null;
   esp: { lastTelemetryAt: Ms | null; distCm: number | null; yawDeg: number | null };
-  lastFrameAt: Ms | null; // sin frames frescos en auto → STOP (clamp de seguridad)
+  lastFrameAt: Ms | null; // sin frames frescos → STOP (clamp de seguridad)
 }
 
 export interface ActuatorCommand {
@@ -52,20 +55,17 @@ export interface ActuatorCommand {
 
 // ---------- Eventos: todo actor externo habla así; nadie toca el estado ----------
 export type BrainEvent =
-  | { type: 'detection'; detection: Detection }
+  | { type: 'scene'; read: SceneRead }
   | { type: 'frame'; capturedAt: Ms }
-  | { type: 'stick'; x: number; y: number } // cualquier |x|+|y| > stickThreshold → puppet
-  | { type: 'mode'; mode: Mode }
-  | { type: 'gesture'; name: 'heart' | 'wave' }
+  | { type: 'run'; run: RunState }
   | { type: 'telemetry'; distCm: number | null; yawDeg: number | null }
   | { type: 'tick' };
 
 // ---------- Constantes del lazo (lo que se tunea con el chasis real) ----------
 export const T = {
-  stickThreshold: 0.05,
-  stickDeadmanMs: 500, // stick más viejo que esto → drive 0
-  detectionMaxAgeMs: 1500, // detección más vieja que esto se descarta
-  confirmHits: 2, // detecciones seguidas para pasar de searching a chasing
+  readMaxAgeMs: 1500, // lectura más vieja que esto se descarta
+  actionMaxMs: 1500, // ninguna acción del LLM vive más que esto sin lectura nueva
+  confirmHits: 2, // lecturas seguidas con target para pasar de searching a chasing
   minConfidence: 0.6,
   lostAfterMs: 1500, // sin ver target en chasing/found → lost
   foundSizeMin: 0.35, // target.size ≥ esto (o distCm < foundDistCm) → found
@@ -75,42 +75,38 @@ export const T = {
   reunionWindowMs: 20000, // lost → found dentro de esta ventana = party
   spinFlipMs: 3000,
   espOfflineMs: 1000,
-  cameraLostMs: 3000, // sin frames en auto → STOP
+  cameraLostMs: 3000, // sin frames → STOP
   obstacleCm: 20, // el firmware frena a 15; acá evitamos pedir lo imposible
-  gestureMs: 2000,
   chase: { forward: 0.5, kTurn: 0.8, centerTol: 0.25 },
   searchSpin: 0.35,
+  actionSpeedCap: 0.6, // techo a lo que pida el LLM: 1–2 s de latencia no pueden convertirse en un choque
 } as const;
 
 export function initialState(now: Ms): RobotState {
-  // Arranca en puppet: nadie se mueve solo hasta apretar "Auto".
+  // Arranca en stopped: nadie se mueve hasta apretar "Arrancar" en #control.
   throw new Error('not implemented');
 }
 
-/** Puro. Idempotente frente a eventos repetidos, detecciones fuera de orden y ticks redundantes. */
+/** Puro. Idempotente frente a eventos repetidos, lecturas fuera de orden y ticks redundantes. */
 export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
   switch (e.type) {
-    case 'detection':
-      // TODO if (e.detection.frameId <= (s.target?.frameId ?? -1)) return s;          // fuera de orden
-      // TODO if (now - e.detection.capturedAt > T.detectionMaxAgeMs) return s;        // frame viejo
-      // TODO if (!e.detection.target || confidence < T.minConfidence) → hits = 0; return (no borra target: lo hace el tick por edad)
-      // TODO target = toTarget(e.detection); hits += 1; behavior = stepBehavior(s, now)  (solo en mode auto)
+    case 'scene':
+      // TODO if (e.read.frameId <= (s.target?.frameId ?? -1)) return s;           // fuera de orden
+      // TODO if (now - e.read.capturedAt > T.readMaxAgeMs) return s;             // frame viejo
+      // TODO action = e.read.action ? { ...e.read.action, until: capturedAt + min(durationMs, T.actionMaxMs), frameId } : s.action
+      // TODO if (!e.read.target || confidence < T.minConfidence) → hits = 0 (no borra target: lo hace el tick por edad)
+      // TODO else target = toTarget(e.read); hits += 1
+      // TODO behavior = stepBehavior(s, now) (solo si run === 'running')
       throw new Error('not implemented');
     case 'frame':
       throw new Error('not implemented'); // lastFrameAt = e.capturedAt
-    case 'stick':
-      // TODO stick = {x, y, at: now}; if (|x|+|y| > T.stickThreshold) mode = 'puppet'  (el humano gana sin botón)
+    case 'run':
+      // TODO if (e.run === s.run) return s; al pasar a running: behavior = searching(now), hits = 0, action = null
       throw new Error('not implemented');
-    case 'mode':
-      // TODO if (e.mode === s.mode) return s; al entrar a auto: behavior = searching(now), hits = 0
-      throw new Error('not implemented');
-    case 'gesture':
-      throw new Error('not implemented'); // gesture = {name, until: now + T.gestureMs}
     case 'telemetry':
       throw new Error('not implemented'); // esp = {lastTelemetryAt: now, distCm, yawDeg}
     case 'tick':
-      // TODO gesture expirado → null
-      // TODO behavior por tiempo (solo auto):
+      // TODO behavior por tiempo (solo running):
       //   chasing/found sin target fresco (> lostAfterMs) → lost
       //   lost > sadMs → searching
       //   found > celebrateMs y sigue viéndolo → found (party=false)
@@ -124,22 +120,27 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
   }
 }
 
-/** Puro y derivado. Arbitraje humano/IA y clamp de seguridad en un solo lugar. */
+/** Puro y derivado. Prioridad: stopped > clamp de seguridad > show (found/lost) > acción del LLM > P-control/spin. */
 export function plan(s: RobotState, now: Ms): ActuatorCommand {
+  // TODO if (run === 'stopped') → STOP, servos 90/90, tone 0
   // TODO drive =
-  //   mode === 'puppet' ? (now - stick.at > T.stickDeadmanMs ? STOP : mix(stick))   // mix: left = y + x, right = y - x, clamp
-  //   : behavior.kind === 'searching' ? spin(spinDir)
-  //   : behavior.kind === 'chasing'   ? chase(target, now)  // P sobre (cx - 0.5) con decay por edad del target
-  //   : behavior.kind === 'found'     ? (party ? twirl(now) : STOP)
-  //   : STOP (lost)
-  // TODO clampSafety: en auto sin frames frescos (cameraLostMs) → STOP; distCm < obstacleCm → sin avance
-  // TODO servo = gesture ?? poseFor(behavior)  (found: 180/0 corazón; lost: 30/150 caídos; default 90/90)
-  // TODO tone = puppet ? 0 : found ? (party ? 4 : 2) : lost ? 3 : chasing recién entrado (< 300 ms) ? 1 : 0
+  //   behavior.kind === 'found' ? (party ? twirl(now) : STOP)
+  //   : behavior.kind === 'lost' ? STOP
+  //   : actionFresh(s.action, now) ? fromAction(s.action)         // el LLM manda el path (searching y chasing)
+  //   : behavior.kind === 'chasing' ? chase(target, now)           // fallback: P sobre (cx - 0.5) con decay por edad
+  //   : spin(spinDir)                                              // fallback: buscar girando
+  // TODO clampSafety: sin frames frescos (cameraLostMs) → STOP; distCm < obstacleCm → sin avance; speed ≤ actionSpeedCap
+  // TODO servo = poseFor(behavior)  (found: 180/0 corazón; lost: 30/150 caídos; default 90/90)
+  // TODO tone = found ? (party ? 4 : 2) : lost ? 3 : chasing recién entrado (< 300 ms) ? 1 : 0
   throw new Error('not implemented');
 }
 
+export function actionFresh(a: PlannedAction | null, now: Ms): a is PlannedAction {
+  return a !== null && now < a.until;
+}
+
 export function moodOf(s: RobotState, now: Ms): Mood {
-  // offline (sin telemetría) > puppet > found&party → party > behavior.kind
+  // offline (sin telemetría) > stopped > found&party → party > behavior.kind
   throw new Error('not implemented');
 }
 

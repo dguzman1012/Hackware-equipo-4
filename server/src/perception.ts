@@ -1,5 +1,6 @@
-// Frames + detector. El detector devuelve dominio (0..1). Lo que hable Gemini (0..1000) muere en detectors.ts.
-import type { DetectorKind } from '@gaucho/protocol';
+// Frames + lectura de escena. El reader devuelve dominio (0..1, acciones tipadas). Lo que hable Gemini
+// (0..1000, JSON) muere en readers.ts.
+import type { ActionKind, ReaderKind } from '@gaucho/protocol';
 import type { Ms } from './brain';
 
 export interface Frame {
@@ -29,29 +30,38 @@ export class FrameBus {
   }
 }
 
-export interface Detection {
+/** Lo que el LLM propone hacer a partir de este frame. El server lo aplica mientras esté fresco. */
+export interface Action {
+  kind: ActionKind;
+  speed: number; // 0..1
+  durationMs: number; // ≤ 1500; el server no obedece más allá de eso sin una lectura nueva
+}
+
+/** Una lectura de escena: dónde está Gaucho (si está) y qué hacer. */
+export interface SceneRead {
   frameId: number;
   capturedAt: Ms;
   target: { cx: number; cy: number; size: number; confidence: number } | null; // null = no lo vi
-  caption: string; // "pensamiento" en personaje ('' si el detector no lo da)
+  action: Action | null; // null = el reader no opina (mock/manual); el brain cae al P-control
+  caption: string; // "pensamiento" en personaje ('' si el reader no lo da)
   latencyMs: number;
 }
 
-export interface Detector {
-  readonly kind: DetectorKind;
-  detect(frame: Frame): Promise<Detection>;
+export interface SceneReader {
+  readonly kind: ReaderKind;
+  read(frame: Frame): Promise<SceneRead>;
 }
 
 /**
- * Una inferencia en vuelo. Al terminar toma frames.latest(); si es el mismo frameId que ya procesó,
+ * Una lectura en vuelo. Al terminar toma frames.latest(); si es el mismo frameId que ya procesó,
  * espera al próximo push. Nunca hay cola: la latencia del modelo fija el Hz.
  * Errores del modelo → log + backoff 1 s; el Brain no se entera (el tick lo lleva a 'lost' por edad).
  */
-export class DetectorLoop {
+export class ReaderLoop {
   constructor(
     private readonly frames: FrameBus,
-    private detector: Detector,
-    private readonly onDetection: (d: Detection) => void,
+    private reader: SceneReader,
+    private readonly onRead: (r: SceneRead) => void,
   ) {}
 
   start(): void {
@@ -60,14 +70,14 @@ export class DetectorLoop {
   stop(): void {
     throw new Error('not implemented');
   }
-  /** Swap en caliente desde el piloto (botón IA: gemini / manual / mock). */
-  setDetector(d: Detector): void {
+  /** Swap en caliente desde #control (gemini / mock / manual). */
+  setReader(r: SceneReader): void {
     throw new Error('not implemented');
   }
-  current(): Detector {
-    return this.detector;
+  current(): SceneReader {
+    return this.reader;
   }
-  lastLatencyMs(): number | null {
+  stats(): { kind: ReaderKind; latencyMs: number | null; fps: number } {
     throw new Error('not implemented');
   }
 }

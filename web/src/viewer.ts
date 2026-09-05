@@ -1,5 +1,5 @@
 // #viewer — jurado. Read-only, N instancias. Canvas con el último JPEG + overlay (bbox si target.ageMs < 1500,
-// label grande con mood/behavior y caption). También lo reutiliza #pilot.
+// label grande con mood/behavior y caption, acción vigente del LLM). También lo reutiliza #control.
 import type { StateMsg } from '@gaucho/protocol';
 import { RobotSocket } from './ws';
 
