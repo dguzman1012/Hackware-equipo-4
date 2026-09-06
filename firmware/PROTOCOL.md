@@ -31,7 +31,7 @@ Firmware nuevo acepta 6 u 8 campos. Seis campos → `say=0 tok=0`. Siete campos 
 
 Peor caso `S 4294967295 -255 -255 180 180 4 6 63\n` = 38 bytes. `WIRE_MAX` es 64. `drainInbox` tira un datagrama de 64 bytes y acepta 63.
 
-Aplicar el paquete entero de una vez. Recibir el mismo `S` dos veces no cambia nada. Si el server quiere que suene 2 s, manda `tone≠0` durante 2 s. Las canciones largas salen del **celular**; el ESP32 solo hace tonos por I2S (si el I2S no está listo, ignorar `tone` es válido). `say`/`tok` no pisan `tone`.
+Aplicar el paquete entero de una vez. Recibir el mismo `S` dos veces no cambia nada. Si el server quiere que suene 2 s, manda `tone≠0` durante 2 s. Las canciones de mood salen del **celular** (`#face`). El ESP32 puede ignorar `tone`/`say` si el I2S no está listo. `say`/`tok` no pisan `tone`.
 
 ## `T` — Telemetría (ESP32 → server), 10 Hz, a la IP del último `S`
 

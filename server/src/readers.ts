@@ -48,7 +48,8 @@ const GeminiResponseZ = z.object({
 });
 
 const GEMINI_PROMPT = `Sos un robot chico enamorado de Gaucho, el robot humanoide blanco de la oficina (cabeza redonda, ojos).
-Ignorá cestos, paredes y personas. Mirá la imagen de tu cámara frontal y devolvé JSON con:
+Ignorá cestos, paredes y personas. Mirá la imagen de tu cámara. found=true si ves ese robot blanco, aunque esté de lado, lejos, recortado o en el centro. Si un cuerpo blanco con cabeza redonda está en el medio o cerca del centro, es Gaucho. found=false solo si ese robot no está en el cuadro.
+Devolvé JSON con:
 - found: si Gaucho está visible
 - box_2d: [ymin, xmin, ymax, xmax] en escala 0..1000 (solo si found)
 - confidence: 0..1

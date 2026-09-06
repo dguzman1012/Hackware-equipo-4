@@ -9,7 +9,7 @@ export interface CameraOptions {
   quality: number;
 }
 
-export const DEFAULT_CAMERA: CameraOptions = { facing: 'user', width: 320, height: 240, fps: 5, quality: 0.4 };
+export const DEFAULT_CAMERA: CameraOptions = { facing: 'user', width: 480, height: 360, fps: 5, quality: 0.6 };
 
 export function cameraOptionsFromUrl(search: string): CameraOptions {
   const cam = new URLSearchParams(search).get('cam');

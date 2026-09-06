@@ -1,8 +1,8 @@
-// #face — el celu montado en el robot. Pantalla completa: emoji gigante + fondo por mood + caption; cámara y audio.
-// Botón "Iniciar" (gesto) → Camera.start + AudioPlayer.unlock + navigator.wakeLock.request('screen') + frame_meta.
-// onState: render(mood, caption); if (mood !== prev) audio.play(clipFor(mood)) — idempotente ante snapshots repetidos.
+// #face — el celu montado en el robot. Pantalla: emoji + fondo por mood + caption; cámara y audio.
+// Botón "Iniciar" (gesto) → Camera.start + AudioPlayer.unlock + wakeLock + frame_meta.
+// onState: render(mood, caption); if (mood !== prev) audio.play(clipFor(mood)).
 import type { Mood } from '@gaucho/protocol';
-import { AudioPlayer, clipFor } from './audio';
+import { AudioPlayer, clipFor, phraseFor, speak, unlockSpeech } from './audio';
 import { Camera, cameraOptionsFromUrl } from './camera';
 import { RobotSocket } from './ws';
 
@@ -30,12 +30,14 @@ export function mountFace(root: HTMLElement): void {
   const opts = cameraOptionsFromUrl(location.search);
 
   let prevMood: Mood | null = null;
+  let phraseN = 0;
   let frameCount = 0;
   let fpsWindow = 0;
   let fpsDisplay = 0;
   let connected = false;
   let started = false;
 
+  document.documentElement.classList.add('face-mode');
   root.className = 'face';
   root.innerHTML = `
     <div class="face-emoji" id="face-emoji">${FACE.offline.emoji}</div>
@@ -88,12 +90,18 @@ export function mountFace(root: HTMLElement): void {
     root.style.backgroundColor = face.bg;
     captionEl.textContent = s.caption;
     if (s.mood !== prevMood) {
-      const clip = clipFor(s.mood);
-      if (clip) audio.play(clip);
-      else audio.stop();
+      audio.play(clipFor(s.mood));
+      if (started) sayLine(s.mood);
       prevMood = s.mood;
     }
   });
+
+  function sayLine(mood: Mood): void {
+    const line = phraseFor(mood, phraseN);
+    phraseN += 1;
+    captionEl.textContent = line;
+    speak(line);
+  }
 
   startBtn.addEventListener('click', () => {
     void (async () => {
@@ -106,6 +114,7 @@ export function mountFace(root: HTMLElement): void {
 
       try {
         await audio.unlock();
+        unlockSpeech();
       } catch {
         // continue even if unlock fails
       }
@@ -119,9 +128,23 @@ export function mountFace(root: HTMLElement): void {
       }
 
       void requestWakeLock();
+      const orientation = screen.orientation as ScreenOrientation & {
+        lock?: (mode: string) => Promise<void>;
+      };
+      try {
+        await orientation.lock?.('landscape');
+      } catch {
+        // phone may stay in portrait CSS; .face-mode rotates the eyes
+      }
       started = true;
       sendFrameMeta();
       startBtn.hidden = true;
+      const mood = prevMood ?? 'searching';
+      audio.play(clipFor(mood));
+      sayLine(mood);
+      setInterval(() => {
+        sayLine(prevMood ?? 'searching');
+      }, 15_000);
     })();
   });
 }

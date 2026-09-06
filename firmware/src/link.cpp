@@ -4,9 +4,15 @@
 
 void Link::begin(const Secrets& s) {
     secrets_ = s;
+    WiFi.persistent(false);
     WiFi.mode(WIFI_STA);
+    WiFi.setSleep(false);
     WiFi.setAutoReconnect(true);
+    WiFi.disconnect(true, true);
+    delay(100);
+    Serial.printf("[wifi] begin ssid=%s\n", s.ssid);
     WiFi.begin(s.ssid, s.pass);
+    lastReconnectAt_ = millis();
 }
 
 LinkView Link::tick(uint32_t now, const SensorFrame& sensors) {
@@ -19,17 +25,31 @@ LinkView Link::tick(uint32_t now, const SensorFrame& sensors) {
 }
 
 void Link::wifiStep(uint32_t now) {
-    const bool up = WiFi.status() == WL_CONNECTED;
+    const wl_status_t st = WiFi.status();
+    const int code = static_cast<int>(st);
+    if (code != lastStatus_) {
+        lastStatus_ = code;
+        if (st == WL_CONNECTED) {
+            Serial.printf("[wifi] up ip=%s\n", WiFi.localIP().toString().c_str());
+        } else {
+            Serial.printf("[wifi] status=%d\n", code);
+        }
+    }
+
+    const bool up = st == WL_CONNECTED;
     if (up && !udpUp_) {
         udpUp_ = udp_.begin(UDP_PORT);
     }
     if (!up && udpUp_) {
         udp_.stop();
         udpUp_ = false;
+        havePeer_ = false;
     }
-    if (!up && now - lastReconnectAt_ >= 5000) {
+    if (!up && now - lastReconnectAt_ >= 20000) {
         lastReconnectAt_ = now;
-        WiFi.reconnect();
+        Serial.println("[wifi] retry");
+        WiFi.disconnect();
+        WiFi.begin(secrets_.ssid, secrets_.pass);
     }
     core_.setOnline(up && udpUp_);
 }

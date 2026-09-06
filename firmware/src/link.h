@@ -29,6 +29,7 @@ private:
     bool havePeer_ = false;
     bool udpUp_ = false;
     uint32_t lastReconnectAt_ = 0;
+    int lastStatus_ = -1;
 
     void wifiStep(uint32_t now);
     void drainInbox(uint32_t now);

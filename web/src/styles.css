@@ -50,9 +50,33 @@ body.debug #cam {
 }
 
 .face-emoji {
-  font-size: 40vh;
+  font-size: 55vmin;
   line-height: 1;
   margin-bottom: 0.5rem;
+}
+
+html.face-mode .face-emoji {
+  font-size: 55vh;
+}
+
+@media (orientation: portrait) {
+  html.face-mode .face {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100vh;
+    height: 100vw;
+    transform-origin: top left;
+    transform: rotate(90deg) translateY(-100%);
+  }
+
+  html.face-mode .face-emoji {
+    font-size: 55vw;
+  }
+
+  html.face-mode .face-caption {
+    max-width: 90vh;
+  }
 }
 
 .face-caption {

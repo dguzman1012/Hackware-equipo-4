@@ -57,4 +57,4 @@ Host tests cover PROTOCOL example parse, the seq window (including wrap), phase 
 
 - Motors, sign only: left IN1/IN2 = GPIO 25/26, right IN3/IN4 = GPIO 27/33. 0 is all LOW (coast).
 - LEDs: left GPIO 18, right GPIO 19, active HIGH.
-- MAX98357A I2S: DIN GPIO 4, BCLK GPIO 16, LRC GPIO 17. Voice clips start when `tok` changes on `S`.
+- MAX98357A I2S: DIN GPIO 4, BCLK GPIO 16, LRC GPIO 17. SD GPIO 23 (or tie SD to 3V3). VIN and GND required. Speaker on the +/− pads, not GAIN. A boot clip plays on reset. Hunt clips start when `tok` changes on `S`.

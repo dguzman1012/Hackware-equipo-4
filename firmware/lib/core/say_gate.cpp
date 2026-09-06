@@ -9,7 +9,7 @@ ClipId SayGate::step(const LinkView& link, uint32_t now) {
     if (stale) {
         seeded_ = true;
         lastToken_ = link.want.say.token;
-        return ClipId::None;
+        return link.want.say.clip;
     }
 
     if (link.want.say.token != lastToken_) {

@@ -41,27 +41,79 @@ test('parar frena aunque haya acción fresca del LLM', () => {
   assert.deepEqual(plan(s, now + 120).drive, STOP);
 });
 
-test('searching turns a short step then waits for the model', () => {
+test('searching holds still until a clear miss on this pose', () => {
   let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
   s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
-  const step = plan(s, 100).drive;
-  assert.ok(step.left !== 0 && step.left === -step.right, 'short turn');
-  assert.deepEqual(plan(s, T.searchStepMs + 50).drive, STOP, 'dwell so Gemini can see');
-  const t2 = T.searchStepMs + T.searchDwellMs + 50;
-  s = reduce(s, { type: 'frame', capturedAt: t2 }, t2);
-  const next = plan(s, t2).drive;
-  assert.ok(next.left !== 0 && next.left === -next.right, 'next step');
+  assert.deepEqual(plan(s, 100).drive, STOP, 'no turn before the first read');
+
+  s = reduce(s, { type: 'scene', read: read(1, 0, null) }, 2000);
+  const step = plan(s, 2000).drive;
+  assert.ok(step.left !== 0 && step.left === -step.right, 'miss on this pose arms one step');
+  assert.deepEqual(plan(s, 2000 + T.searchStepMs + 10).drive, STOP, 'step is short');
+});
+
+test('a miss during an armed step does not stack another turn', () => {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
+  s = reduce(s, { type: 'scene', read: read(1, 0, null) }, 100);
+  const first = plan(s, 100).drive;
+  s = reduce(s, { type: 'scene', read: read(2, 80, null) }, 120);
+  const again = plan(s, 120).drive;
+  assert.ok(first.left !== 0);
+  assert.deepEqual(again, first);
+});
+
+test('low confidence in the frame holds still', () => {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
+  const weak: SceneRead = {
+    ...read(1, 0, 0.5),
+    target: { cx: 0.5, cy: 0.5, size: 0.2, confidence: 0.2 },
+  };
+  s = reduce(s, { type: 'scene', read: weak }, 500);
+  assert.equal(s.behavior.kind, 'searching');
+  assert.deepEqual(plan(s, 500).drive, STOP);
+});
+
+test('off-center target micro-adjusts then goes straight', () => {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
+  s = reduce(s, { type: 'scene', read: read(1, 0, 0.8) }, 100);
+  const burst = plan(s, 100).drive;
+  assert.ok(burst.left > burst.right, 'bbox on the right → short right turn');
+  const after = plan(s, 100 + T.chase.alignMaxMs + 10).drive;
+  assert.equal(after.left, after.right);
+  assert.ok(after.left > 0, 'after the burst, advance');
+});
+
+test('Gaucho in the middle of a search pose chases and does not spin', () => {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
+  s = reduce(s, { type: 'scene', read: read(1, 0, 0.5) }, 800);
+  assert.equal(s.behavior.kind, 'chasing');
+  const d = plan(s, 800).drive;
+  assert.ok(d.left > 0 && d.right > 0);
+  assert.ok(Math.abs(d.left - d.right) < 0.05, 'centered target goes forward, not a search spin');
+});
+
+test('after one search step, the next turn waits for a new miss', () => {
+  let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
+  s = reduce(s, { type: 'scene', read: read(1, 0, null) }, 100);
+  s = reduce(s, { type: 'tick' }, 100 + T.searchStepMs + 1);
+  assert.deepEqual(plan(s, 100 + T.searchStepMs + 1).drive, STOP);
+  s = reduce(s, { type: 'frame', capturedAt: 400 }, 400);
+  s = reduce(s, { type: 'scene', read: read(2, 400, null) }, 410);
+  const again = plan(s, 410).drive;
+  assert.ok(again.left !== 0 && again.left === -again.right);
 });
 
 test('searching → chasing requiere confirmHits lecturas y gira hacia el target (P-control sin acción del LLM)', () => {
   let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
   s = reduce(s, { type: 'frame', capturedAt: 900 }, 900);
   s = reduce(s, { type: 'scene', read: read(1, 900, 0.8) }, 1000);
-  assert.equal(s.behavior.kind, 'searching');
-  s = reduce(s, { type: 'frame', capturedAt: 1900 }, 1900);
-  s = reduce(s, { type: 'scene', read: read(2, 1900, 0.8) }, 2000);
   assert.equal(s.behavior.kind, 'chasing');
-  const d = plan(s, 2000).drive;
+  const d = plan(s, 1000).drive;
   assert.ok(d.left > d.right, 'Gaucho a la derecha → gira a la derecha');
 });
 
@@ -134,14 +186,18 @@ test('tone: search silent, chase/found hold love, lost sad, stop silent', () => 
   assert.equal(plan(chase, lostAt + 3).tone, 0);
 });
 
+test('arrancar sets an unseen clip', () => {
+  const s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
+  assert.ok(s.say.clip !== null && s.say.clip >= 4 && s.say.clip <= 6);
+  assert.notEqual(s.say.token, 0);
+});
+
 test('searching→chasing sets a seen clip and bumps token', () => {
   let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
   s = reduce(s, { type: 'frame', capturedAt: 900 }, 900);
-  s = reduce(s, { type: 'scene', read: read(1, 900, 0.8) }, 1000);
   const quiet = s.say;
-  assert.equal(quiet.clip, null);
-  s = reduce(s, { type: 'frame', capturedAt: 1900 }, 1900);
-  s = reduce(s, { type: 'scene', read: read(2, 1900, 0.8) }, 2000);
+  assert.ok(quiet.clip !== null && quiet.clip >= 4 && quiet.clip <= 6);
+  s = reduce(s, { type: 'scene', read: read(1, 900, 0.8) }, 1000);
   assert.equal(s.behavior.kind, 'chasing');
   assert.ok(s.say.clip !== null && s.say.clip >= 1 && s.say.clip <= 3);
   assert.notEqual(s.say.token, quiet.token);
@@ -156,7 +212,7 @@ test('10 Hz tick does not change say', () => {
   assert.deepEqual(plan(next, now + 200).say, held);
 });
 
-test('chasing→found does not bump say and keeps driving forward', () => {
+test('chasing→found bumps say and keeps driving forward', () => {
   let { s, now } = chasingState();
   const held = s.say;
   const close: SceneRead = {
@@ -166,7 +222,8 @@ test('chasing→found does not bump say and keeps driving forward', () => {
   s = reduce(s, { type: 'frame', capturedAt: now }, now);
   s = reduce(s, { type: 'scene', read: close }, now + 50);
   assert.equal(s.behavior.kind, 'found');
-  assert.deepEqual(s.say, held);
+  assert.notEqual(s.say.token, held.token);
+  assert.ok(s.say.clip !== null && s.say.clip >= 1 && s.say.clip <= 3);
   const d = plan(s, now + 60).drive;
   assert.ok(d.left > 0 && d.right > 0, 'found still advances toward Gaucho');
 });
@@ -195,8 +252,10 @@ test('chasing→lost sets an unseen clip and bumps token', () => {
 test('clamp de seguridad: sin frames frescos no se mueve; con obstáculo no avanza', () => {
   let s = reduce(initialState(0), { type: 'run', run: 'running' }, 0);
   assert.deepEqual(plan(s, 10).drive, STOP, 'nunca hubo frame');
-  s = reduce(s, { type: 'frame', capturedAt: 100 }, 100);
-  assert.notDeepEqual(plan(s, 200).drive, STOP, 'searching gira');
+  s = reduce(s, { type: 'frame', capturedAt: 0 }, 0);
+  assert.deepEqual(plan(s, 50).drive, STOP, 'searching waits for a miss');
+  s = reduce(s, { type: 'scene', read: read(1, 0, null) }, 80);
+  assert.notDeepEqual(plan(s, 80).drive, STOP, 'clear miss arms a search step');
   s = reduce(s, { type: 'scene', read: read(1, 100, null, { kind: 'forward', speed: 0.5, durationMs: 1000 }) }, 150);
   s = reduce(s, { type: 'telemetry', distCm: 10, yawDeg: null }, 300);
   const d = plan(s, 300).drive;

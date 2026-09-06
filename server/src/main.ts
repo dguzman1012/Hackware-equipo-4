@@ -26,6 +26,7 @@ const MIME: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
   '.mp3': 'audio/mpeg',
+  '.wav': 'audio/wav',
   '.png': 'image/png',
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',

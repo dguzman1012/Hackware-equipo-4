@@ -188,25 +188,27 @@ void test_say_gate_thirty_identical_start_once() {
     }
 }
 
-void test_say_gate_boot_first_set_silent() {
+void test_say_gate_boot_first_set_plays_clip() {
     SayGate g;
-    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(7, ClipId::FoundHere)), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(0, ClipId::None)), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(7, ClipId::FoundHere)), 0) ==
+                     ClipId::FoundHere);
 }
 
 void test_say_gate_dark_600ms_new_token_fires() {
     SayGate g;
-    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::FoundHere)), 0) == ClipId::None);
-    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, utter(1, ClipId::FoundHere)), 300) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::None)), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, utter(1, ClipId::None)), 300) == ClipId::None);
     TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(2, ClipId::SeekWhere)), 600) ==
                      ClipId::SeekWhere);
 }
 
-void test_say_gate_dark_2000ms_new_token_silent() {
+void test_say_gate_dark_2000ms_new_token_plays() {
     SayGate g;
-    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::FoundHere)), 0) == ClipId::None);
-    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, utter(1, ClipId::FoundHere)), 1000) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::None)), 0) == ClipId::None);
+    TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Lost, utter(1, ClipId::None)), 1000) == ClipId::None);
     TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(2, ClipId::SeekWhere)), 2000) ==
-                     ClipId::None);
+                     ClipId::SeekWhere);
 }
 
 void test_say_gate_not_linked_always_none() {
@@ -220,7 +222,7 @@ void test_say_gate_not_linked_always_none() {
 void test_say_gate_token_63_to_1_is_a_change() {
     SayGate g;
     TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(63, ClipId::SeekCantSee)), 0) ==
-                     ClipId::None);
+                     ClipId::SeekCantSee);
     TEST_ASSERT_TRUE(g.step(viewOf(LinkPhase::Linked, utter(1, ClipId::FoundHere)), 100) ==
                      ClipId::FoundHere);
 }
@@ -241,9 +243,9 @@ int main() {
     RUN_TEST(test_parse_eight_fields_lands);
     RUN_TEST(test_parse_rejects_bad_say_tok_and_seven_fields);
     RUN_TEST(test_say_gate_thirty_identical_start_once);
-    RUN_TEST(test_say_gate_boot_first_set_silent);
+    RUN_TEST(test_say_gate_boot_first_set_plays_clip);
     RUN_TEST(test_say_gate_dark_600ms_new_token_fires);
-    RUN_TEST(test_say_gate_dark_2000ms_new_token_silent);
+    RUN_TEST(test_say_gate_dark_2000ms_new_token_plays);
     RUN_TEST(test_say_gate_not_linked_always_none);
     RUN_TEST(test_say_gate_token_63_to_1_is_a_change);
     return UNITY_END();

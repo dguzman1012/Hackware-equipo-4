@@ -43,7 +43,11 @@ void loop() {
     motorsApply(act.left, act.right);
     servosApply(act.deg1, act.deg2);
     toneApply(act.tone);
-    voiceStep(g_say.step(link, now));
+    const ClipId say = g_say.step(link, now);
+    if (say != ClipId::None) {
+        Serial.printf("[voice] say=%u\n", static_cast<unsigned>(say));
+    }
+    voiceStep(say);
     ledsShow(ledFrame(link.phase, act, link.lastSeq), now);
 
     static bool first = true;

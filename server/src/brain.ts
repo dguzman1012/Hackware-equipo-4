@@ -36,7 +36,7 @@ export interface PlannedAction {
 }
 
 export type Behavior =
-  | { kind: 'searching'; since: Ms; spinDir: 1 | -1 } // gira despacio alternando cada spinFlipMs
+  | { kind: 'searching'; since: Ms; spinDir: 1 | -1 } // quieta hasta un miss de esta pose; un paso corto; otra vez quieta
   | { kind: 'chasing'; since: Ms } // se acerca a Gaucho
   | { kind: 'found'; since: Ms; party: boolean } // cerca: celebra; party si es reencuentro
   | { kind: 'lost'; since: Ms }; // drama, luego searching
@@ -100,7 +100,9 @@ function nextToken(prev: number): number {
 function sayAfter(s: RobotState, nextBehavior: Behavior): Utterance {
   if (s.run !== 'running') return s.say;
   const nextSight = sightOf(nextBehavior);
-  if (sightOf(s.behavior) === nextSight) return s.say;
+  const sightChanged = sightOf(s.behavior) !== nextSight;
+  const foundNow = s.behavior.kind !== 'found' && nextBehavior.kind === 'found';
+  if (!sightChanged && !foundNow) return s.say;
   const token = nextToken(s.say.token);
   return { token, clip: pickClip(nextSight, token) };
 }
@@ -116,6 +118,8 @@ export interface RobotState {
   esp: { lastTelemetryAt: Ms | null; distCm: number | null; yawDeg: number | null };
   lastFrameAt: Ms | null; // sin frames frescos → STOP (clamp de seguridad)
   say: Utterance;
+  searchLookSince: Ms; // pose quieta; solo una lectura con capturedAt ≥ esto puede armar un paso
+  searchStepUntil: Ms | null; // si está en el futuro, un paso de giro está en curso
 }
 
 export interface ActuatorCommand {
@@ -140,8 +144,8 @@ export type BrainEvent =
 export const T = {
   readMaxAgeMs: 6500, // lectura más vieja que esto se descarta (> READ_TIMEOUT_MS de perception.ts)
   actionMaxMs: 1500, // ninguna acción del LLM vive más que esto desde que llega
-  confirmHits: 2, // lecturas seguidas con target para pasar de searching a chasing
-  minConfidence: 0.6,
+  confirmHits: 1,
+  minConfidence: 0.5,
   lostAfterMs: 5000, // sin lectura con target hace más que esto en chasing/found → lost (≈ 1–2 lecturas sin verlo)
   thoughtMaxMs: 8000, // la frase del LLM se muestra hasta esto después de llegar; luego la frase por behavior
   foundSizeMin: 0.35, // target.size ≥ esto (o distCm < foundDistCm) → found
@@ -149,14 +153,20 @@ export const T = {
   celebrateMs: 4000,
   sadMs: 3000,
   reunionWindowMs: 20000, // lost → found dentro de esta ventana = party
-  searchStepMs: 300,
-  searchDwellMs: 4000,
-  spinFlipMs: 32000,
+  searchStepMs: 160, // un paso de giro solo después de un miss de la pose actual (Gemini ~2–4 s)
   espOfflineMs: 1000,
   cameraLostMs: 3000, // sin frames → STOP
   obstacleCm: 20, // el firmware frena a 15; acá evitamos pedir lo imposible
-  chase: { forward: 0.5, kTurn: 0.8 },
-  searchSpin: 0.35,
+  chase: {
+    forward: 0.55,
+    centerDead: 0.07,
+    alignMinMs: 90,
+    alignMaxMs: 260,
+    alignMsPerErr: 520,
+    alignForward: 0.22,
+    alignTurn: 0.62,
+  },
+  searchSpin: 0.4,
   actionSpeedCap: 0.6, // techo a lo que pida el LLM: 1–2 s de latencia no pueden convertirse en un choque
 } as const;
 
@@ -175,9 +185,35 @@ function isTargetFresh(s: RobotState, now: Ms): boolean {
   return s.target !== null && now - s.target.seenAt <= T.lostAfterMs;
 }
 
-function searchingSpinDir(since: Ms, now: Ms): 1 | -1 {
-  const flips = Math.floor((now - since) / T.spinFlipMs);
-  return (flips % 2 === 0 ? 1 : -1) as 1 | -1;
+function settledSearch(
+  s: RobotState,
+  now: Ms,
+  nextBehavior: Behavior,
+  read: SceneRead | null,
+): Pick<RobotState, 'searchLookSince' | 'searchStepUntil'> {
+  if (nextBehavior.kind !== 'searching') {
+    return { searchLookSince: now, searchStepUntil: null };
+  }
+  if (s.behavior.kind !== 'searching') {
+    return { searchLookSince: now, searchStepUntil: null };
+  }
+
+  let lookSince = s.searchLookSince;
+  let stepUntil = s.searchStepUntil;
+  if (stepUntil !== null && now >= stepUntil) {
+    lookSince = stepUntil;
+    stepUntil = null;
+  }
+
+  if (read && stepUntil === null) {
+    const miss = !read.target;
+    const unsure = read.target !== null && read.target.confidence < T.minConfidence;
+    if (miss && !unsure && now >= lookSince) {
+      stepUntil = now + T.searchStepMs;
+    }
+  }
+
+  return { searchLookSince: lookSince, searchStepUntil: stepUntil };
 }
 
 function stepBehavior(s: RobotState, now: Ms): { behavior: Behavior; lastFoundAt: Ms | null } {
@@ -188,11 +224,6 @@ function stepBehavior(s: RobotState, now: Ms): { behavior: Behavior; lastFoundAt
   let behavior = s.behavior;
   let lastFoundAt = s.lastFoundAt;
   const fresh = isTargetFresh(s, now);
-
-  if (behavior.kind === 'searching') {
-    const spinDir = searchingSpinDir(behavior.since, now);
-    if (spinDir !== behavior.spinDir) behavior = { ...behavior, spinDir };
-  }
 
   switch (behavior.kind) {
     case 'searching':
@@ -245,6 +276,8 @@ export function initialState(now: Ms): RobotState {
     esp: { lastTelemetryAt: null, distCm: null, yawDeg: null },
     lastFrameAt: null,
     say: { token: 0, clip: null },
+    searchLookSince: now,
+    searchStepUntil: null,
   };
 }
 
@@ -276,16 +309,15 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
       }
 
       const thought = read.caption ? { text: read.caption, at: now } : s.thought;
-      const stepped = stepBehavior({ ...s, target, hits, action }, now);
+      const next = { ...s, target, hits, action };
+      const stepped = stepBehavior(next, now);
       return {
-        ...s,
-        target,
+        ...next,
         thought,
-        hits,
-        action,
         behavior: stepped.behavior,
         lastFoundAt: stepped.lastFoundAt,
         say: sayAfter(s, stepped.behavior),
+        ...settledSearch(next, now, stepped.behavior, read),
       };
     }
     case 'frame':
@@ -293,12 +325,16 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
     case 'run': {
       if (e.run === s.run) return s;
       if (e.run === 'running') {
+        const token = nextToken(s.say.token);
         return {
           ...s,
           run: e.run,
           behavior: { kind: 'searching', since: now, spinDir: 1 },
           hits: 0,
           action: null,
+          say: { token, clip: pickClip('unseen', token) },
+          searchLookSince: now,
+          searchStepUntil: null,
         };
       }
       return { ...s, run: e.run, say: { token: nextToken(s.say.token), clip: null } };
@@ -306,13 +342,24 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
     case 'telemetry':
       return { ...s, esp: { lastTelemetryAt: now, distCm: e.distCm, yawDeg: e.yawDeg } };
     case 'tick': {
-      const stepped = stepBehavior(s, now);
-      if (stepped.behavior === s.behavior && stepped.lastFoundAt === s.lastFoundAt) return s;
+      const search = settledSearch(s, now, s.behavior, null);
+      const next = { ...s, ...search };
+      const stepped = stepBehavior(next, now);
+      const settled = settledSearch(next, now, stepped.behavior, null);
+      if (
+        stepped.behavior === s.behavior &&
+        stepped.lastFoundAt === s.lastFoundAt &&
+        settled.searchLookSince === s.searchLookSince &&
+        settled.searchStepUntil === s.searchStepUntil
+      ) {
+        return s;
+      }
       return {
-        ...s,
+        ...next,
         behavior: stepped.behavior,
         lastFoundAt: stepped.lastFoundAt,
         say: sayAfter(s, stepped.behavior),
+        ...settled,
       };
     }
     default: {
@@ -322,22 +369,35 @@ export function reduce(s: RobotState, e: BrainEvent, now: Ms): RobotState {
   }
 }
 
-function chase(target: Target): { left: number; right: number } {
+function alignBurstMs(err: number): number {
+  const a = Math.abs(err);
+  if (a < T.chase.centerDead) return 0;
+  return clamp(T.chase.alignMsPerErr * a, T.chase.alignMinMs, T.chase.alignMaxMs);
+}
+
+function chase(target: Target, now: Ms): { left: number; right: number } {
   const err = target.cx - 0.5;
-  const turn = T.chase.kTurn * err;
-  const forward = T.chase.forward;
-  return { left: clamp(forward + turn, -1, 1), right: clamp(forward - turn, -1, 1) };
+  const burst = alignBurstMs(err);
+  const age = now - target.seenAt;
+  if (burst > 0 && age < burst) {
+    const turn = err > 0 ? T.chase.alignTurn : -T.chase.alignTurn;
+    const forward = T.chase.alignForward;
+    return {
+      left: clamp(forward + turn, 0.08, 1),
+      right: clamp(forward - turn, 0.08, 1),
+    };
+  }
+  return { left: T.chase.forward, right: T.chase.forward };
 }
 
 function spin(dir: 1 | -1): { left: number; right: number } {
   return { left: T.searchSpin * dir, right: -T.searchSpin * dir };
 }
 
-function searchStep(dir: 1 | -1, since: Ms, now: Ms): { left: number; right: number } {
-  const period = T.searchStepMs + T.searchDwellMs;
-  const elapsed = now - since;
-  const phase = ((elapsed % period) + period) % period;
-  return phase < T.searchStepMs ? spin(dir) : STOP_DRIVE;
+function searchDrive(s: RobotState, now: Ms): { left: number; right: number } {
+  if (s.behavior.kind !== 'searching') return STOP_DRIVE;
+  if (s.searchStepUntil === null || now >= s.searchStepUntil) return STOP_DRIVE;
+  return spin(s.behavior.spinDir);
 }
 
 function twirl(now: Ms): { left: number; right: number } {
@@ -415,13 +475,13 @@ function driveFor(s: RobotState, now: Ms): { left: number; right: number } {
   switch (b.kind) {
     case 'found':
       if (b.party) return twirl(now);
-      return s.target ? chase(s.target) : { left: T.chase.forward, right: T.chase.forward };
+      return s.target ? chase(s.target, now) : { left: T.chase.forward, right: T.chase.forward };
     case 'lost':
       return STOP_DRIVE;
     case 'chasing':
-      return s.target ? chase(s.target) : STOP_DRIVE;
+      return s.target ? chase(s.target, now) : STOP_DRIVE;
     case 'searching':
-      return searchStep(b.spinDir, b.since, now);
+      return searchDrive(s, now);
     default: {
       const _exhaustive: never = b;
       return _exhaustive;
